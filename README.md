@@ -190,7 +190,7 @@ Anamnesis works out of the box locally (with zero external database setup requir
 1. Claim your developer key on [platform.cognee.ai](https://platform.cognee.ai/sign-in).
 2. Configure Anamnesis:
    ```bash
-   anamnesis config set-cloud-key COGNEE-35
+   anamnesis config set-cloud-key <your_platform_cognee_cloud_key>
    ```
 3. Or set environment variables in `.env`:
    ```env
