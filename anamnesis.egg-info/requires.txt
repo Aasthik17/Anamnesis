@@ -1,0 +1,7 @@
+cognee
+typer
+rich
+GitPython
+pydantic
+python-dotenv
+openai

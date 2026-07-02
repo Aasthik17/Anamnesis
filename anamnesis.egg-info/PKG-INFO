@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: anamnesis
+Version: 0.1.0
+Summary: A CLI companion that gives your codebase a long-term memory using Cognee AI
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: cognee
+Requires-Dist: typer
+Requires-Dist: rich
+Requires-Dist: GitPython
+Requires-Dist: pydantic
+Requires-Dist: python-dotenv
+Requires-Dist: openai
+
+# Anamnesis
+A CLI companion that gives your codebase a long-term memory, so every AI-assisted coding session starts smart instead of starting blank.

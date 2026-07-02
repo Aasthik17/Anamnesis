@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "storage_dir": ".anamnesis",
+  "hooks_installed": false,
+  "max_context_diffs": 5,
+  "reflection_threshold": 3,
+  "cognee_api_key": "test-cognee-key-123",
+  "cognee_api_url": "https://api.cognee.ai",
+  "llm_provider": "openai",
+  "llm_api_key": null,
+  "use_cloud": true
+}

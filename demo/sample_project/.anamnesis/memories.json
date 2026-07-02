@@ -1,0 +1,25 @@
+[
+  {
+    "id": "rule_cba7f0d5",
+    "memory_type": "rule",
+    "title": "Null-check external API responses & handle empty returns",
+    "content": "[CONSOLIDATED RULE] Null-check external API responses & handle empty returns\nDomain: services\nRule: Consolidated rule from 1 reported issue(s). Always ensure safe handling and check response status before accessing nested fields.\nObserved in files: services/user_service.py\nConfidence: 0.7999999999999999\n",
+    "file_path": null,
+    "metadata": {
+      "id": "rule_cba7f0d5",
+      "rule_title": "Null-check external API responses & handle empty returns",
+      "description": "Consolidated rule from 1 reported issue(s). Always ensure safe handling and check response status before accessing nested fields.",
+      "domain": "services",
+      "origin_memory_ids": [
+        "mem_bug_8cec331b"
+      ],
+      "provenance_files": [
+        "services/user_service.py"
+      ],
+      "confidence": 0.7999999999999999,
+      "timestamp": "2026-07-02T13:40:39.780799+00:00"
+    },
+    "timestamp": "2026-07-02T13:40:39.780884+00:00",
+    "active": true
+  }
+]
