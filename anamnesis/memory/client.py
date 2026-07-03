@@ -1,24 +1,43 @@
 import os
 import uuid
 import json
+import asyncio
+import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from anamnesis.config import get_anamnesis_dir
+from anamnesis.config import get_anamnesis_dir, load_config
 from anamnesis.memory.schemas import (
-    MemoryRecord, MemoryType, BugFixMemory, CodeRuleMemory, CommitMemory
+    MemoryRecord, MemoryType, BugFixMemory, CodeRuleMemory, CommitMemory,
+    CodeKnowledgeGraph, CODE_ENTITY_EXTRACTION_PROMPT,
 )
+
+logger = logging.getLogger(__name__)
+
 
 class MemoryClient:
     """
     Client interface connecting Anamnesis CLI with Cognee memory primitives
     and local persistence metadata.
+
+    Cognee Integration Strategy (Phase 2):
+    - cognify() uses CodeKnowledgeGraph schema for typed entity extraction
+    - recall() uses SearchType.GRAPH_COMPLETION + HYBRID_COMPLETION + CODING_RULES
+    - temporal_cognify=True tracks bug pattern evolution over time
+    - Auto-reflection fires when bug count hits reflection_threshold
+    - session_id enables episodic memory for pre-commit context
     """
+
     def __init__(self, repo_root: Optional[Path] = None):
         self.anamnesis_dir = get_anamnesis_dir(repo_root)
         self.store_file = self.anamnesis_dir / "memories.json"
         self._records: Dict[str, MemoryRecord] = {}
         self._load_records()
         self._cognee_initialized = False
+        self._last_session_id: Optional[str] = None
+
+    # ------------------------------------------------------------------
+    # Persistence (local JSON store — always-available ground truth)
+    # ------------------------------------------------------------------
 
     def _load_records(self) -> None:
         if self.store_file.exists():
@@ -36,6 +55,10 @@ class MemoryClient:
         data = [rec.model_dump() for rec in self._records.values() if rec.active]
         with open(self.store_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+
+    # ------------------------------------------------------------------
+    # Cognee initialization
+    # ------------------------------------------------------------------
 
     def _init_cognee_if_needed(self) -> bool:
         if self._cognee_initialized:
@@ -64,13 +87,281 @@ class MemoryClient:
             return True
         except ImportError:
             return False
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Cognee init failed: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # Internal async helpers for Cognee operations
+    # ------------------------------------------------------------------
+
+    async def _cognee_add_and_cognify(self, content: str, dataset: str, use_temporal: bool = False) -> None:
+        """
+        Add content to Cognee and cognify with the custom CodeKnowledgeGraph schema.
+
+        Key upgrades over the original:
+        - graph_model=CodeKnowledgeGraph  → typed nodes, not flat text blobs
+        - custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT  → code-aware entity extraction
+        - temporal_cognify=True  → tracks bug pattern evolution over time
+        """
+        import cognee
+        await cognee.add(content, dataset_name=dataset)
+        await cognee.cognify(
+            datasets=[dataset],
+            graph_model=CodeKnowledgeGraph,
+            custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT,
+            temporal_cognify=use_temporal,
+        )
+
+    async def _recall_async(
+        self,
+        query: str,
+        file_context: Optional[str] = None,
+        top_k: int = 5,
+        session_id: Optional[str] = None,
+    ) -> List[MemoryRecord]:
+        """
+        Multi-strategy semantic recall using Cognee's SearchType hierarchy.
+
+        Strategy 1: GRAPH_COMPLETION — deep graph traversal + LLM reasoning
+                     Traverses 2-hop neighborhoods from matched nodes, ideal for
+                     finding bugs related through shared code entities.
+
+        Strategy 2: HYBRID_COMPLETION — vector chunks + graph entities + triplets
+                     Broader coverage; picks up semantic similarity misses from
+                     pure graph traversal.
+
+        Strategy 3: CODING_RULES — dedicated retriever for rule/convention queries
+                     Uses Cognee's code-aware retriever tuned for rule patterns.
+
+        All strategies respect session_id for episodic memory priority.
+        Falls back to local JSON keyword scoring ONLY if all Cognee calls fail.
+        """
+        import cognee
+        from cognee.modules.search.types.SearchType import SearchType
+
+        enhanced_query = f"In file {file_context}: {query}" if file_context else query
+        raw_cognee_results: List[Any] = []
+
+        # Strategy 1: Graph-completion — deep traversal, best for relational queries
+        try:
+            graph_results = await cognee.search(
+                query_text=enhanced_query,
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=["anamnesis_codebase"],
+                top_k=top_k,
+                neighborhood_depth=2,
+                only_context=True,
+                session_id=session_id,
+            )
+            if graph_results:
+                raw_cognee_results.extend(
+                    [(r, "GRAPH_COMPLETION") for r in graph_results]
+                )
+                logger.debug(f"Graph search returned {len(graph_results)} results")
+        except Exception as e:
+            logger.debug(f"Graph search unavailable: {e}")
+
+        # Strategy 2: Hybrid — vector + graph entities + triplets combined
+        try:
+            hybrid_results = await cognee.search(
+                query_text=enhanced_query,
+                query_type=SearchType.HYBRID_COMPLETION,
+                datasets=["anamnesis_codebase"],
+                top_k=top_k,
+                only_context=True,
+                session_id=session_id,
+            )
+            if hybrid_results:
+                raw_cognee_results.extend(
+                    [(r, "HYBRID_COMPLETION") for r in hybrid_results]
+                )
+                logger.debug(f"Hybrid search returned {len(hybrid_results)} results")
+        except Exception as e:
+            logger.debug(f"Hybrid search unavailable: {e}")
+
+        # Strategy 3: Coding rules — dedicated retriever for rules/conventions
+        # Activated for any query mentioning rules, conventions, best practices, etc.
+        rule_keywords = {"rule", "convention", "pattern", "practice", "standard", "guideline"}
+        if any(kw in query.lower() for kw in rule_keywords):
+            try:
+                rule_results = await cognee.search(
+                    query_text=enhanced_query,
+                    query_type=SearchType.CODING_RULES,
+                    datasets=["anamnesis_codebase", "anamnesis_rules"],
+                    top_k=top_k,
+                )
+                if rule_results:
+                    raw_cognee_results.extend(
+                        [(r, "CODING_RULES") for r in rule_results]
+                    )
+                    logger.debug(f"Coding rules search returned {len(rule_results)} results")
+            except Exception as e:
+                logger.debug(f"Coding rules search unavailable: {e}")
+
+        # Convert Cognee SearchResult objects to MemoryRecord format
+        if raw_cognee_results:
+            records = self._search_results_to_records(raw_cognee_results, top_k)
+            # Only trust Cognee results if they found substantial, non-empty content.
+            # Cognee returns empty-context completions for new/empty graphs — those
+            # should not block the local keyword fallback from running.
+            if records and any(len(r.content.strip()) >= 20 for r in records):
+                return records
+
+        # Fallback: local JSON keyword scoring (only if ALL Cognee strategies failed)
+        logger.debug("All Cognee search strategies unavailable — using keyword fallback")
+        return self._keyword_fallback(query, file_context, top_k)
+
+    def _search_results_to_records(
+        self,
+        search_results: List[tuple],
+        top_k: int,
+    ) -> List[MemoryRecord]:
+        """
+        Convert Cognee SearchResult objects to MemoryRecord format.
+
+        Unlike the original (which used brittle str() matching against local JSON),
+        this creates MemoryRecord objects directly from the Cognee search results,
+        preserving the semantic content and tagging the search strategy used.
+
+        Synthetic records (not matched to local store) are only created when the
+        content is substantial (>=20 chars). Empty completions from an empty graph
+        are discarded so the keyword fallback can run instead.
+        """
+        seen_ids = set()
+        records = []
+
+        for result, strategy in search_results:
+            if len(records) >= top_k:
+                break
+
+            # Extract content from various Cognee result formats
+            content = ""
+            title = "Cognee Memory Node"
+            file_path = None
+            mem_type = MemoryType.DOCUMENTATION
+
+            if hasattr(result, "text"):
+                content = result.text
+            elif hasattr(result, "content"):
+                content = result.content
+            elif isinstance(result, dict):
+                content = result.get("text", result.get("content", str(result)))
+                title = result.get("title", title)
+            else:
+                content = str(result)
+
+            # Skip empty or trivial completions (e.g. empty-graph responses)
+            if len(content.strip()) < 20:
+                logger.debug(f"Skipping trivial Cognee result (len={len(content.strip())}): {content[:50]!r}")
+                continue
+
+            # Try to match back to a local record for richer metadata
+            matched_local = self._find_local_match(content, title)
+            if matched_local:
+                if matched_local.id in seen_ids:
+                    continue
+                seen_ids.add(matched_local.id)
+                # Annotate which strategy found this
+                matched_local.search_strategy = strategy
+                records.append(matched_local)
+            else:
+                # Create a synthetic MemoryRecord from the Cognee result
+                synthetic_id = f"cognee_{uuid.uuid4().hex[:8]}"
+                if synthetic_id in seen_ids:
+                    continue
+                seen_ids.add(synthetic_id)
+                records.append(MemoryRecord(
+                    id=synthetic_id,
+                    memory_type=mem_type,
+                    title=title,
+                    content=content,
+                    file_path=file_path,
+                    metadata={"source": "cognee_graph"},
+                    search_strategy=strategy,
+                ))
+
+        return records
+
+    def _find_local_match(self, content: str, title: str) -> Optional[MemoryRecord]:
+        """Attempt to match a Cognee result back to a local JSON record by content overlap."""
+        content_lower = content.lower()
+        best_match = None
+        best_score = 0
+
+        for rec in self._records.values():
+            if not rec.active:
+                continue
+            score = 0
+            # Title substring match
+            if rec.title.lower() in content_lower or content_lower[:100] in rec.content.lower():
+                score += 5
+            # File path match
+            if rec.file_path and rec.file_path.lower() in content_lower:
+                score += 3
+            # ID match
+            if rec.id in content:
+                score += 10
+            if score > best_score:
+                best_score = score
+                best_match = rec
+
+        return best_match if best_score >= 3 else None
+
+    def _keyword_fallback(
+        self,
+        query: str,
+        file_context: Optional[str],
+        top_k: int,
+    ) -> List[MemoryRecord]:
+        """
+        Local JSON keyword scoring fallback.
+        Used ONLY when all Cognee search strategies are unavailable.
+        """
+        query_terms = set(query.lower().replace("/", " ").replace("_", " ").split())
+        scored: List[tuple] = []
+
+        for rec in self._records.values():
+            if not rec.active:
+                continue
+            score = 0
+            rec_text = (rec.content + " " + rec.title + " " + (rec.file_path or "")).lower()
+
+            if file_context and rec.file_path:
+                norm_fc = file_context.lower().replace("\\", "/")
+                norm_fp = rec.file_path.lower().replace("\\", "/")
+                if norm_fc in norm_fp or norm_fp in norm_fc or Path(norm_fc).name == Path(norm_fp).name:
+                    score += 5
+
+            for term in query_terms:
+                if len(term) > 2 and term in rec_text:
+                    score += 2
+
+            if score > 0:
+                rec.search_strategy = "KEYWORD_FALLBACK"
+                scored.append((score, rec))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [rec for _, rec in scored[:top_k]]
+
+    def get_last_session_id(self) -> Optional[str]:
+        """Return the most recent session ID used by this client."""
+        return self._last_session_id
+
+    # ------------------------------------------------------------------
+    # COGNEE PRIMITIVE: remember
+    # ------------------------------------------------------------------
 
     def remember_bug(self, bug: BugFixMemory) -> MemoryRecord:
         """
         [COGNEE PRIMITIVE: remember]
-        Ingests a bug fix into memory.
+        Ingests a bug fix into the Cognee knowledge graph with typed entity extraction.
+
+        Upgrades:
+        - Uses CodeKnowledgeGraph schema for structured node extraction
+        - Uses CODE_ENTITY_EXTRACTION_PROMPT for code-aware LLM prompting
+        - temporal_cognify=True to track bug pattern evolution over time
+        - Auto-triggers reflect() when reflection_threshold is reached
         """
         mem_id = f"mem_bug_{uuid.uuid4().hex[:8]}"
         bug.id = mem_id
@@ -87,18 +378,38 @@ class MemoryClient:
         self._records[mem_id] = record
         self._save_records()
 
-        # Push to Cognee engine
+        # Push to Cognee with custom schema + temporal tracking
         if self._init_cognee_if_needed():
             try:
-                import asyncio
-                import cognee
-                asyncio.run(cognee.add(content, dataset_name="anamnesis_codebase"))
-                asyncio.run(cognee.cognify(dataset_name="anamnesis_codebase"))
-            except Exception:
-                # Local index serves as guarantee
-                pass
+                asyncio.run(self._cognee_add_and_cognify(
+                    content=content,
+                    dataset="anamnesis_codebase",
+                    use_temporal=True,  # Track bug pattern evolution over time
+                ))
+                logger.debug(f"Bug {mem_id} ingested into Cognee graph with CodeKnowledgeGraph schema")
+            except Exception as e:
+                logger.debug(f"Cognee ingestion failed, local store used: {e}")
+
+        # Auto-trigger reflection when threshold is reached
+        self._check_reflection_threshold()
 
         return record
+
+    def _check_reflection_threshold(self) -> None:
+        """Auto-trigger consolidation when bug count hits reflection_threshold."""
+        config = load_config()
+        threshold = int(config.get("reflection_threshold", 3))
+        active_bugs = [r for r in self._records.values()
+                       if r.active and r.memory_type == MemoryType.BUG_FIX]
+        count = len(active_bugs)
+        if count > 0 and count % threshold == 0:
+            logger.debug(f"Auto-reflection triggered at {count} bug fixes (threshold={threshold})")
+            try:
+                from anamnesis.memory.consolidator import MemoryConsolidator
+                consolidator = MemoryConsolidator(self)
+                consolidator.reflect()
+            except Exception as e:
+                logger.debug(f"Auto-reflection failed: {e}")
 
     def remember_commit(self, commit: CommitMemory) -> MemoryRecord:
         """
@@ -122,18 +433,17 @@ class MemoryClient:
 
         if self._init_cognee_if_needed():
             try:
-                import asyncio
                 import cognee
                 asyncio.run(cognee.add(content, dataset_name="anamnesis_codebase"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Cognee commit ingestion failed: {e}")
 
         return record
 
     def remember_rule(self, rule: CodeRuleMemory) -> MemoryRecord:
         """
         [COGNEE PRIMITIVE: remember / memify]
-        Stores a consolidated rule.
+        Stores a consolidated coding rule.
         """
         mem_id = f"rule_{uuid.uuid4().hex[:8]}"
         rule.id = mem_id
@@ -151,11 +461,13 @@ class MemoryClient:
 
         if self._init_cognee_if_needed():
             try:
-                import asyncio
-                import cognee
-                asyncio.run(cognee.add(content, dataset_name="anamnesis_rules"))
-            except Exception:
-                pass
+                asyncio.run(self._cognee_add_and_cognify(
+                    content=content,
+                    dataset="anamnesis_rules",
+                    use_temporal=False,
+                ))
+            except Exception as e:
+                logger.debug(f"Cognee rule ingestion failed: {e}")
 
         return record
 
@@ -183,89 +495,78 @@ class MemoryClient:
 
         if self._init_cognee_if_needed():
             try:
-                import asyncio
-                import cognee
-                asyncio.run(cognee.add(mem_text, dataset_name="anamnesis_codebase"))
-                asyncio.run(cognee.cognify(dataset_name="anamnesis_codebase"))
-            except Exception:
-                pass
+                asyncio.run(self._cognee_add_and_cognify(
+                    content=mem_text,
+                    dataset="anamnesis_codebase",
+                    use_temporal=False,
+                ))
+            except Exception as e:
+                logger.debug(f"Cognee doc ingestion failed: {e}")
 
         return record
+
+    # ------------------------------------------------------------------
+    # COGNEE PRIMITIVE: recall
+    # ------------------------------------------------------------------
+
+    def recall(
+        self,
+        query: str,
+        file_context: Optional[str] = None,
+        top_k: int = 5,
+        session_id: Optional[str] = None,
+    ) -> List[MemoryRecord]:
+        """
+        [COGNEE PRIMITIVE: recall]
+        Multi-strategy semantic recall using Cognee's graph and hybrid search.
+
+        Uses SearchType.GRAPH_COMPLETION + HYBRID_COMPLETION + CODING_RULES
+        instead of brittle str() matching on cognee.search() results.
+        Session memory is prioritized when session_id is provided.
+        """
+        if session_id:
+            self._last_session_id = session_id
+
+        if self._init_cognee_if_needed():
+            try:
+                return asyncio.run(
+                    self._recall_async(query, file_context, top_k, session_id)
+                )
+            except Exception as e:
+                logger.debug(f"Cognee recall failed, using keyword fallback: {e}")
+
+        return self._keyword_fallback(query, file_context, top_k)
+
+    # ------------------------------------------------------------------
+    # COGNEE PRIMITIVE: improve
+    # ------------------------------------------------------------------
 
     def improve(self) -> bool:
         """
         [COGNEE PRIMITIVE: improve / memify]
         Runs post-ingestion graph enrichment, edge weight adaptation, and memory pruning.
+        Re-cognifies with the updated CodeKnowledgeGraph schema.
         """
         if self._init_cognee_if_needed():
             try:
-                import asyncio
                 import cognee
                 if hasattr(cognee, "memify"):
                     asyncio.run(cognee.memify())
-                asyncio.run(cognee.cognify(dataset_name="anamnesis_codebase"))
+                # Re-run cognify with the custom schema to improve existing graph structure
+                asyncio.run(cognee.cognify(
+                    datasets=["anamnesis_codebase"],
+                    graph_model=CodeKnowledgeGraph,
+                    custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT,
+                    temporal_cognify=True,
+                ))
                 return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Cognee improve failed: {e}")
         return True
 
-    def recall(self, query: str, file_context: Optional[str] = None, top_k: int = 5) -> List[MemoryRecord]:
-        """
-        [COGNEE PRIMITIVE: recall]
-        Surfaces relevant memories connected to query, file context, or diff signatures.
-        """
-        cognee_results = []
-        if self._init_cognee_if_needed():
-            try:
-                import asyncio
-                import cognee
-                search_res = asyncio.run(cognee.search(query_text=query, dataset_name="anamnesis_codebase"))
-                if search_res:
-                    # Parse cognee search results if available
-                    for res in search_res:
-                        res_str = str(res)
-                        for rec in self._records.values():
-                            if rec.id not in [r.id for r in cognee_results] and (rec.title in res_str or rec.file_path in res_str):
-                                cognee_results.append(rec)
-            except Exception:
-                pass
-
-        # Graph / Vector / Keyword Fallback & Score Matching
-        matched = list(cognee_results)
-        query_terms = set(query.lower().replace("/", " ").replace("_", " ").split())
-        
-        for rec in self._records.values():
-            if rec in matched or not rec.active:
-                continue
-
-            score = 0
-            rec_text = (rec.content + " " + rec.title + " " + (rec.file_path or "")).lower()
-            
-            # File context matching
-            if file_context and rec.file_path:
-                norm_fc = file_context.lower().replace("\\", "/")
-                norm_fp = rec.file_path.lower().replace("\\", "/")
-                if norm_fc in norm_fp or norm_fp in norm_fc or Path(norm_fc).name == Path(norm_fp).name:
-                    score += 5
-
-            # Term frequency match
-            for term in query_terms:
-                if len(term) > 2 and term in rec_text:
-                    score += 2
-
-            if score > 0:
-                matched.append((score, rec))
-
-        # Sort combined results by score
-        scored_results = []
-        for item in matched:
-            if isinstance(item, tuple):
-                scored_results.append(item)
-            else:
-                scored_results.append((10, item))
-
-        scored_results.sort(key=lambda x: x[0], reverse=True)
-        return [rec for _, rec in scored_results[:top_k]]
+    # ------------------------------------------------------------------
+    # COGNEE PRIMITIVE: forget
+    # ------------------------------------------------------------------
 
     def forget(self, memory_id_or_path: str) -> List[str]:
         """
@@ -275,12 +576,10 @@ class MemoryClient:
         removed_ids = []
         target = memory_id_or_path.strip()
 
-        # Check exact ID
         if target in self._records:
             self._records[target].active = False
             removed_ids.append(target)
         else:
-            # Check by file path or substring
             for rec_id, rec in list(self._records.items()):
                 if rec.active and (rec.file_path and target in rec.file_path or target in rec.id):
                     rec.active = False
@@ -290,15 +589,17 @@ class MemoryClient:
             self._save_records()
             if self._init_cognee_if_needed():
                 try:
-                    import asyncio
                     import cognee
-                    # Call Cognee prune if available
                     if hasattr(cognee, "prune"):
                         asyncio.run(cognee.prune.prune_data())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Cognee prune failed: {e}")
 
         return removed_ids
+
+    # ------------------------------------------------------------------
+    # Query helpers
+    # ------------------------------------------------------------------
 
     def list_memories(self, memory_type: Optional[MemoryType] = None) -> List[MemoryRecord]:
         recs = [r for r in self._records.values() if r.active]
@@ -306,5 +607,11 @@ class MemoryClient:
             recs = [r for r in recs if r.memory_type == memory_type]
         return recs
 
-    def get_rules(self) -> List[MemoryRecord]:
-        return self.list_memories(MemoryType.RULE)
+    def get_rules(self, domain: Optional[str] = None) -> List[MemoryRecord]:
+        rules = self.list_memories(MemoryType.RULE)
+        if domain:
+            rules = [r for r in rules if r.metadata.get("domain", "").lower() == domain.lower()]
+        return rules
+
+    def get_all_active(self) -> List[MemoryRecord]:
+        return list(self._records.values())

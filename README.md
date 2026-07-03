@@ -8,6 +8,43 @@
 
 ---
 
+## 🏆 Built for Cognee AI Hackathon
+
+Anamnesis was designed from the ground up as a **pure memory infrastructure showcase** built on **[Cognee AI](https://cognee.ai)**. Rather than treating Cognee as a basic vector database, Anamnesis exercises all 5 core primitives in the **Cognee Memory Lifecycle**:
+
+```
+                  ┌───────────────────────────────────────────────┐
+                  │          Cognee Memory Lifecycle Engine       │
+                  └───────────────────────┬───────────────────────┘
+                                          │
+    ┌───────────────────────┬─────────────┴─────────┬───────────────────────┐
+    ▼                       ▼                       ▼                       ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│  remember()   │   │   recall()    │   │   memify()    │   │   forget()    │
+│  ingests git  │   │ pre-commit    │   │ consolidates  │   │ decays dead   │
+│ history & bugs│   │ graph query   │   │  team rules   │   │ code memory   │
+└───────────────┘   └───────────────┘   └───────────────┘   └───────────────┘
+```
+
+| Cognee Primitive | Hackathon Showcase Implementation | CLI Command |
+|---|---|---|
+| **`remember()`** | Ingests git commit diffs, bug root causes, and architecture decisions into the graph | `anamnesis remember-bug`<br>`anamnesis remember` |
+| **`recall()`** | Hybrid graph traversal + vector search to surface contextual pre-commit warnings | `anamnesis ask`<br>Git pre-commit hook |
+| **`memify()`** | Clusters near-duplicate bug reports into generalized team coding conventions | `anamnesis reflect`<br>`anamnesis rules` |
+| **`improve()`** | Re-indexes graph relationships, optimizes edge weights, and enriches nodes | `anamnesis improve` |
+| **`forget()`** | Decays stale memory nodes when code is deleted or refactored | `anamnesis forget` |
+
+---
+
+## 🎬 Demo Video & Recording Script
+
+[![Anamnesis Live Demo Video](https://img.youtube.com/vi/YOUR_YOUTUBE_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_YOUTUBE_ID)
+> 📹 *Click the image above to watch the 2-minute demonstration of Anamnesis and Cognee AI memory primitives.*
+> 
+> 📖 **Recording Script & Guide**: See [`DEMO_VIDEO_GUIDE.md`](file:///Users/aasthikupadhyay/Desktop/Anamnesis/DEMO_VIDEO_GUIDE.md) for the scene-by-scene voiceover script, terminal setup, and automated demo runner instructions.
+
+---
+
 ## 1. The Problem
 
 Every AI coding assistant today suffers from **amnesia**. You fix a subtle race condition or null pointer bug in `user_service.py` on Monday. On Friday, a teammate (or you, on a different feature branch) writes the exact same flaw in `payment_service.py`. The assistant has no idea it already saw this pattern, because LLM context resets every session and lives in isolated chat windows.
