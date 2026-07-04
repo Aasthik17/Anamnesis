@@ -518,12 +518,13 @@ def visualize_cmd(
         ) as progress:
             progress.add_task(description="Generating Cognee provenance graph...", total=None)
 
+            memories = client.list_memories()
             try:
                 graph_data = asyncio.run(cognee.get_memory_provenance_graph())
-                graph_html = _render_provenance_html(graph_data)
+                # Merge local memory records in so bug/rule detail is clickable.
+                graph_html = _render_provenance_html(graph_data, memories)
             except AttributeError:
                 # Fallback: generate a simple HTML visualization from local memories
-                memories = client.list_memories()
                 graph_html = _generate_fallback_graph_html(memories)
 
         out_path = output or (root / ".anamnesis" / "graph.html")
@@ -541,12 +542,297 @@ def visualize_cmd(
         console.print("[dim]Try 'anamnesis status' for a text-based memory overview.[/dim]")
 
 
-def _render_provenance_html(graph_data: Any) -> str:
-    """Render Cognee provenance graph data to HTML."""
-    return f"""<!DOCTYPE html>
+def _short_label(node_type: str, name: str, node_id: str) -> str:
+    """
+    A short, human-readable tag for a node — never the raw UUID.
+    Keeps the graph legible; full detail lives in the click-to-open info panel.
+    """
+    friendly = {
+        "User": "user",
+        "Session": "session",
+        "TextDocument": "doc",
+        "DocumentChunk": "chunk",
+    }
+    if node_type in friendly:
+        return friendly[node_type]
+    # Datasets keep their (already short) name.
+    if node_type == "Dataset":
+        return (name or "dataset")[:20]
+    # Anything else: use the name but strip UUID-ish tails and hard-cap length.
+    base = str(name or node_id).split(":")[0].strip()
+    return base[:20] + ("…" if len(base) > 20 else "")
+
+
+def _memory_node_detail(mem: Any) -> Dict[str, str]:
+    """Structured detail shown in the info panel when a memory node is clicked."""
+    meta = mem.metadata or {}
+    detail: Dict[str, str] = {"Type": mem.memory_type.value, "Title": mem.title}
+    if mem.memory_type.value == "bug_fix":
+        if meta.get("root_cause"):
+            detail["Root Cause"] = meta["root_cause"]
+        if meta.get("fix_description"):
+            detail["Fix"] = meta["fix_description"]
+    elif mem.memory_type.value == "rule":
+        if meta.get("description"):
+            detail["Description"] = meta["description"]
+        if meta.get("domain"):
+            detail["Domain"] = meta["domain"]
+    else:
+        body = (mem.content or "").strip()
+        if body:
+            detail["Content"] = body[:400] + ("…" if len(body) > 400 else "")
+    if mem.file_path:
+        detail["File"] = mem.file_path
+    return detail
+
+
+def _render_provenance_html(graph_data: Any, memories: Optional[List] = None) -> str:
+    """
+    Render Cognee's provenance graph — a (nodes, edges) tuple of Node/EdgeData
+    objects — into an interactive D3 graph, merged with local memory records so
+    bug/rule detail is clickable.
+
+    Each Node has `.id` and `.properties` ({'type', 'name', ...}); each EdgeData has
+    `.source`, `.target`, `.relation`. We normalise those into the {nodes, links}
+    shape the D3 template expects. Falls back to a readable text dump if the shape
+    is unexpected.
+    """
+    def _attr(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    nodes_raw, edges_raw = [], []
+    if isinstance(graph_data, (tuple, list)) and len(graph_data) == 2:
+        nodes_raw, edges_raw = graph_data[0] or [], graph_data[1] or []
+
+    nodes = []
+    node_ids = set()
+    dataset_anchor = None  # id of the anamnesis_codebase dataset, to hang memories off
+    for n in nodes_raw:
+        nid = _attr(n, "id")
+        if nid is None:
+            continue
+        nid = str(nid)
+        props = _attr(n, "properties", {}) or {}
+        ntype = props.get("type", "node")
+        name = props.get("name") or props.get("text") or nid
+        if ntype == "Dataset" and props.get("name") == "anamnesis_codebase":
+            dataset_anchor = nid
+        nodes.append({
+            "id": nid,
+            "label": _short_label(ntype, name, nid),
+            "type": ntype,
+            "size": _node_size_for_type(ntype),
+            "detail": {"Type": ntype, "Name": str(name)},
+        })
+        node_ids.add(nid)
+
+    edges = []
+    for e in edges_raw:
+        src, tgt = _attr(e, "source"), _attr(e, "target")
+        if src is None or tgt is None:
+            continue
+        edges.append({
+            "source": str(src),
+            "target": str(tgt),
+            "relation": _attr(e, "relation", "") or "",
+        })
+
+    # Merge in local memory records as rich, clickable nodes.
+    if memories:
+        if dataset_anchor is None:
+            dataset_anchor = "memories_root"
+            nodes.append({
+                "id": dataset_anchor, "label": "memories", "type": "category",
+                "size": 16, "detail": {"Type": "Memory store"},
+            })
+        for mem in memories[:100]:
+            mid = f"mem::{mem.id}"
+            if mid in node_ids:
+                continue
+            node_ids.add(mid)
+            nodes.append({
+                "id": mid,
+                "label": mem.title[:20] + ("…" if len(mem.title) > 20 else ""),
+                "type": mem.memory_type.value,
+                "size": 9,
+                "detail": _memory_node_detail(mem),
+            })
+            edges.append({"source": dataset_anchor, "target": mid, "relation": mem.memory_type.value})
+
+    if not nodes:
+        # Unexpected shape — show it readably rather than a raw repr blob.
+        return f"""<!DOCTYPE html>
 <html><head><title>Anamnesis Memory Provenance</title>
 <style>body{{background:#0d1117;color:#c9d1d9;font-family:monospace;padding:20px}}</style>
-</head><body><pre>{graph_data}</pre></body></html>"""
+</head><body><h2>Memory Provenance (raw)</h2><pre>{graph_data}</pre></body></html>"""
+
+    return _d3_graph_html(nodes, edges, "Memory Provenance Graph")
+
+
+def _node_size_for_type(node_type: str) -> int:
+    """Bigger circles for higher-level provenance nodes."""
+    sizes = {
+        "User": 20, "Dataset": 17, "Session": 15,
+        "TextDocument": 13, "DocumentChunk": 10,
+    }
+    return sizes.get(node_type, 9)
+
+
+# Shared color palette across provenance + memory node types.
+_GRAPH_NODE_COLORS = {
+    # Cognee provenance types
+    "User": "#ffa657", "Dataset": "#f0883e", "Session": "#a371f7",
+    "TextDocument": "#58a6ff", "DocumentChunk": "#79c0ff",
+    "Entity": "#3fb950", "EntityType": "#2ea043", "NodeSet": "#8b949e",
+    # Anamnesis memory types
+    "root": "#ffa657", "category": "#ffa657",
+    "bug_fix": "#f85149", "rule": "#3fb950",
+    "commit": "#58a6ff", "documentation": "#d2a8ff",
+}
+
+
+def _d3_graph_html(nodes: List[dict], edges: List[dict], title: str) -> str:
+    """Shared interactive D3 force-graph renderer with edge-relation labels."""
+    import json as json_mod
+    nodes_json = json_mod.dumps(nodes)
+    edges_json = json_mod.dumps(edges)
+    colors_json = json_mod.dumps(_GRAPH_NODE_COLORS)
+
+    # Build the legend from the node types actually present.
+    present_types = []
+    for n in nodes:
+        t = n.get("type", "node")
+        if t not in present_types:
+            present_types.append(t)
+    legend_html = " &nbsp; ".join(
+        f'<span style="background:{_GRAPH_NODE_COLORS.get(t, "#8b949e")}"></span>{t}'
+        for t in present_types
+    )
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <title>Anamnesis — {title}</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {{ background: #0d1117; color: #c9d1d9; font-family: 'JetBrains Mono', monospace; margin: 0; overflow: hidden; }}
+    h1 {{ position: absolute; top: 15px; left: 20px; color: #58a6ff; font-size: 18px; margin: 0; }}
+    .legend {{ position: absolute; top: 55px; left: 20px; font-size: 12px; max-width: 90vw; }}
+    .legend span {{ display: inline-block; width: 12px; height: 12px; margin-right: 5px; border-radius: 50%; }}
+    .hint {{ position: absolute; bottom: 12px; left: 20px; font-size: 11px; color: #8b949e; }}
+    svg {{ width: 100vw; height: 100vh; }}
+    .node circle {{ stroke: #30363d; stroke-width: 1.5px; cursor: pointer; }}
+    .node text {{ font-size: 9px; fill: #8b949e; pointer-events: none; }}
+    .node.selected circle {{ stroke: #58a6ff; stroke-width: 3px; }}
+    .link {{ stroke: #30363d; stroke-width: 1px; opacity: 0.6; }}
+    .link-label {{ font-size: 8px; fill: #6e7681; pointer-events: none; }}
+    .node circle:hover {{ stroke: #58a6ff; stroke-width: 2.5px; }}
+    #info-panel {{
+      position: absolute; top: 0; right: 0; width: 340px; max-width: 80vw; height: 100vh;
+      background: #161b22; border-left: 1px solid #30363d; box-sizing: border-box;
+      padding: 20px; overflow-y: auto; transform: translateX(100%);
+      transition: transform 0.2s ease; box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+    }}
+    #info-panel.open {{ transform: translateX(0); }}
+    #info-panel .tag {{ display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; color: #0d1117; font-weight: bold; margin-bottom: 12px; }}
+    #info-panel h2 {{ font-size: 15px; margin: 6px 0 14px; color: #e6edf3; word-break: break-word; }}
+    #info-panel .row {{ margin-bottom: 12px; }}
+    #info-panel .k {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; margin-bottom: 3px; }}
+    #info-panel .v {{ font-size: 13px; color: #c9d1d9; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }}
+    #info-close {{ position: absolute; top: 12px; right: 14px; cursor: pointer; color: #8b949e;
+      font-size: 20px; background: none; border: none; }}
+    #info-close:hover {{ color: #c9d1d9; }}
+  </style>
+</head>
+<body>
+  <h1>🧠 Anamnesis — {title}</h1>
+  <div class="legend">{legend_html}</div>
+  <div class="hint">Click a node for details · drag to reposition · scroll to zoom</div>
+  <svg></svg>
+  <div id="info-panel">
+    <button id="info-close">×</button>
+    <span class="tag" id="info-tag"></span>
+    <h2 id="info-title"></h2>
+    <div id="info-body"></div>
+  </div>
+  <script>
+    const nodes = {nodes_json};
+    const links = {edges_json};
+    const color = {colors_json};
+
+    const svg = d3.select("svg");
+    const width = window.innerWidth, height = window.innerHeight;
+    const container = svg.append("g");
+
+    svg.call(d3.zoom().scaleExtent([0.2, 4]).on("zoom", (e) => container.attr("transform", e.transform)));
+
+    const sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d => d.id).distance(100))
+      .force("charge", d3.forceManyBody().strength(-260))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collide", d3.forceCollide().radius(d => (d.size || 8) + 14));
+
+    const link = container.append("g").selectAll("line")
+      .data(links).join("line").attr("class", "link");
+
+    const linkLabel = container.append("g").selectAll("text")
+      .data(links).join("text").attr("class", "link-label")
+      .text(d => d.relation || "");
+
+    const node = container.append("g").selectAll("g")
+      .data(nodes).join("g").attr("class", "node")
+      .call(d3.drag()
+        .on("start", (e, d) => {{ if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }})
+        .on("drag", (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
+        .on("end", (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }}));
+
+    node.append("circle")
+      .attr("r", d => d.size || 8)
+      .style("fill", d => color[d.type] || "#8b949e");
+
+    node.append("text").attr("dx", d => (d.size || 8) + 3).attr("dy", 4)
+      .text(d => d.label);
+
+    node.append("title").text(d => (d.type + ": " + d.label));
+
+    // ---- Click-to-open info panel ----
+    const panel = document.getElementById("info-panel");
+    function showInfo(d) {{
+      const tag = document.getElementById("info-tag");
+      tag.textContent = d.type;
+      tag.style.background = color[d.type] || "#8b949e";
+      document.getElementById("info-title").textContent = (d.detail && d.detail.Title) || d.label;
+      const body = document.getElementById("info-body");
+      body.innerHTML = "";
+      const detail = d.detail || {{ Type: d.type }};
+      for (const [k, v] of Object.entries(detail)) {{
+        if (k === "Title" || v == null || v === "") continue;
+        const row = document.createElement("div"); row.className = "row";
+        const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k;
+        const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v;
+        row.appendChild(kk); row.appendChild(vv); body.appendChild(row);
+      }}
+      node.classed("selected", n => n.id === d.id);
+      panel.classList.add("open");
+    }}
+    function hideInfo() {{ panel.classList.remove("open"); node.classed("selected", false); }}
+    node.on("click", (e, d) => {{ e.stopPropagation(); showInfo(d); }});
+    document.getElementById("info-close").onclick = hideInfo;
+    svg.on("click", hideInfo);
+
+    sim.on("tick", () => {{
+      link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+      linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
+               .attr("y", d => (d.source.y + d.target.y) / 2);
+      node.attr("transform", d => `translate(${{d.x}}, ${{d.y}})`);
+    }});
+  </script>
+</body>
+</html>"""
 
 
 def _generate_fallback_graph_html(memories: List) -> str:
@@ -571,86 +857,14 @@ def _generate_fallback_graph_html(memories: List) -> str:
     for mem in memories[:50]:  # Cap at 50 for readability
         nodes.append({
             "id": mem.id,
-            "label": mem.title[:40] + ("..." if len(mem.title) > 40 else ""),
+            "label": mem.title[:20] + ("…" if len(mem.title) > 20 else ""),
             "type": mem.memory_type.value,
-            "size": 8,
-            "file": mem.file_path or "",
+            "size": 9,
+            "detail": _memory_node_detail(mem),
         })
         edges.append({"source": type_nodes.get(mem.memory_type.value, "root"), "target": mem.id})
 
-    nodes_json = json_mod.dumps(nodes)
-    edges_json = json_mod.dumps(edges)
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-  <title>Anamnesis Memory Provenance Graph</title>
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-  <style>
-    body {{ background: #0d1117; color: #c9d1d9; font-family: 'JetBrains Mono', monospace; margin: 0; overflow: hidden; }}
-    h1 {{ position: absolute; top: 15px; left: 20px; color: #58a6ff; font-size: 18px; margin: 0; }}
-    .legend {{ position: absolute; top: 55px; left: 20px; font-size: 12px; }}
-    .legend span {{ display: inline-block; width: 12px; height: 12px; margin-right: 5px; border-radius: 50%; }}
-    svg {{ width: 100vw; height: 100vh; }}
-    .node circle {{ stroke: #30363d; stroke-width: 1.5px; cursor: pointer; }}
-    .node text {{ font-size: 10px; fill: #c9d1d9; pointer-events: none; }}
-    .link {{ stroke: #30363d; stroke-width: 1px; opacity: 0.6; }}
-    .node circle:hover {{ stroke: #58a6ff; stroke-width: 2.5px; }}
-  </style>
-</head>
-<body>
-  <h1>🧠 Anamnesis Memory Graph</h1>
-  <div class="legend">
-    <span style="background:#f85149"></span>bug_fix &nbsp;
-    <span style="background:#3fb950"></span>rule &nbsp;
-    <span style="background:#58a6ff"></span>commit &nbsp;
-    <span style="background:#d2a8ff"></span>docs &nbsp;
-    <span style="background:#ffa657"></span>category
-  </div>
-  <svg></svg>
-  <script>
-    const nodes = {nodes_json};
-    const links = {edges_json};
-    const color = {{
-      "root": "#ffa657", "category": "#ffa657",
-      "bug_fix": "#f85149", "rule": "#3fb950",
-      "commit": "#58a6ff", "documentation": "#d2a8ff"
-    }};
-
-    const svg = d3.select("svg");
-    const width = window.innerWidth, height = window.innerHeight;
-    const sim = d3.forceSimulation(nodes)
-      .force("link", d3.forceLink(links).id(d => d.id).distance(80))
-      .force("charge", d3.forceManyBody().strength(-200))
-      .force("center", d3.forceCenter(width / 2, height / 2));
-
-    const link = svg.append("g").selectAll("line")
-      .data(links).join("line").attr("class", "link");
-
-    const node = svg.append("g").selectAll("g")
-      .data(nodes).join("g").attr("class", "node")
-      .call(d3.drag()
-        .on("start", (e, d) => {{ if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }})
-        .on("drag", (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
-        .on("end", (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }}));
-
-    node.append("circle")
-      .attr("r", d => d.size || 8)
-      .style("fill", d => color[d.type] || "#8b949e");
-
-    node.append("text").attr("dx", d => (d.size || 8) + 3).attr("dy", 4)
-      .text(d => d.label);
-
-    node.append("title").text(d => d.file ? d.label + "\\n" + d.file : d.label);
-
-    sim.on("tick", () => {{
-      link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-          .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-      node.attr("transform", d => `translate(${{d.x}}, ${{d.y}})`);
-    }});
-  </script>
-</body>
-</html>"""
+    return _d3_graph_html(nodes, edges, "Memory Graph")
 
 
 # ---------------------------------------------------------------------------
