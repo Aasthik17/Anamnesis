@@ -6,7 +6,11 @@
   "reflection_threshold": 3,
   "cognee_api_key": "test-cognee-key-123",
   "cognee_api_url": "https://api.cognee.ai",
-  "llm_provider": "openai",
+  "llm_provider": "ollama",
   "llm_api_key": null,
+  "llm_model": "llama3.2:latest",
+  "embedding_model": "nomic-embed-text",
+  "embedding_dimensions": 768,
+  "ollama_base_url": "http://localhost:11434/v1",
   "use_cloud": true
 }

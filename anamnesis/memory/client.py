@@ -65,23 +65,22 @@ class MemoryClient:
             return True
         try:
             import cognee
-            from anamnesis.config import load_config
+            from anamnesis.config import load_config, configure_llm_env
             config = load_config()
 
             # Set up local cognee data directory inside .anamnesis
             cognee_data_dir = str(self.anamnesis_dir / "cognee_data")
             os.environ["COGNEE_DATA_DIR"] = cognee_data_dir
 
-            # Cloud & LLM API Key Configuration
+            # Cognee Cloud (optional) configuration
             cognee_key = os.getenv("COGNEE_API_KEY") or config.get("cognee_api_key")
             cognee_url = os.getenv("COGNEE_API_URL") or config.get("cognee_api_url", "https://api.cognee.ai")
-            llm_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or config.get("llm_api_key")
-
             if cognee_key:
                 os.environ["COGNEE_API_KEY"] = cognee_key
                 os.environ["COGNEE_API_URL"] = cognee_url
-            if llm_key:
-                os.environ["OPENAI_API_KEY"] = llm_key
+
+            # LLM + embedding backend (Ollama by default — local & free).
+            configure_llm_env(config)
 
             self._cognee_initialized = True
             return True

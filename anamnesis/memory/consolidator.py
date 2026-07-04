@@ -140,12 +140,19 @@ class MemoryConsolidator:
         try:
             import openai
             import os
+            from anamnesis.config import configure_llm_env
 
+            # Ollama (local & free) by default, or OpenAI if configured.
+            configure_llm_env()
             llm_key = os.getenv("OPENAI_API_KEY")
             if not llm_key:
                 return []
 
-            client = openai.AsyncOpenAI(api_key=llm_key)
+            client = openai.AsyncOpenAI(
+                api_key=llm_key,
+                base_url=os.getenv("OPENAI_BASE_URL") or None,
+            )
+            model = os.getenv("ANAMNESIS_LLM_MODEL", "gpt-4o-mini")
 
             memory_texts = "\n\n".join([
                 f"BUG {i + 1}: {m.title}\n"
@@ -156,7 +163,7 @@ class MemoryConsolidator:
             ])
 
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model,
                 response_format={"type": "json_object"},
                 messages=[{
                     "role": "system",
