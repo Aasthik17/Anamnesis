@@ -38,11 +38,11 @@ def render_search_strategy_badge(strategy: Optional[str]) -> str:
 
 def render_banner() -> None:
     banner_text = r"""[bold cyan]
-   ___                      __                 
-  / _ | ___  ___ ___ _  ___/ /_ _____  ___ _____
- / __ |/ _ \/ _ `/  ' \/ _  / __/ __/ / _ `/ _  /
-/_/ |_/_//_/\_,_/_/_/_/\_,_/\__/\__/  \_, /\_,_/ 
-                                     /___/       
+    _    _   _    _    __  __ _   _ _____ ____ ___ ____  
+   / \  | \ | |  / \  |  \/  | \ | | ____/ ___|_ _/ ___| 
+  / _ \ |  \| | / _ \ | |\/| |  \| |  _| \___ \| |\___ \ 
+ / ___ \| |\  |/ ___ \| |  | | |\  | |___ ___) | | ___) |
+/_/   \_\_| \_/_/   \_\_|  |_|_| \_|_____|____/___|____/ 
 [/bold cyan]
 [bold magenta]Powered by Cognee AI Memory Engine[/bold magenta] [dim](remember · recall · memify · improve · forget)[/dim]
 [dim]Graph Schema: CodeKnowledgeGraph | Search: GRAPH_COMPLETION + HYBRID + CODING_RULES[/dim]
