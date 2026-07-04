@@ -96,21 +96,38 @@ class MemoryClient:
 
     async def _cognee_add_and_cognify(self, content: str, dataset: str, use_temporal: bool = False) -> None:
         """
-        Add content to Cognee and cognify with the custom CodeKnowledgeGraph schema.
+        Add content to Cognee and build the knowledge graph.
 
-        Key upgrades over the original:
-        - graph_model=CodeKnowledgeGraph  → typed nodes, not flat text blobs
-        - custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT  → code-aware entity extraction
-        - temporal_cognify=True  → tracks bug pattern evolution over time
+        The typed CodeKnowledgeGraph schema + temporal tracking give richer graphs,
+        but require an LLM that reliably emits strict structured JSON (valid UUIDs,
+        nested nodes). Small local models (llama3.2:3b) can't and will retry-hang, so
+        those extras are gated behind config flags (`use_custom_graph_schema`,
+        `use_temporal_cognify`, both OFF by default). If the fancy path is enabled but
+        fails, we fall back to Cognee's robust built-in extraction so the graph is
+        still populated.
         """
         import cognee
+        from anamnesis.config import load_config
+        config = load_config()
         await cognee.add(content, dataset_name=dataset)
-        await cognee.cognify(
-            datasets=[dataset],
-            graph_model=CodeKnowledgeGraph,
-            custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT,
-            temporal_cognify=use_temporal,
-        )
+
+        if config.get("use_custom_graph_schema", False):
+            temporal = use_temporal and config.get("use_temporal_cognify", False)
+            try:
+                await cognee.cognify(
+                    datasets=[dataset],
+                    graph_model=CodeKnowledgeGraph,
+                    custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT,
+                    temporal_cognify=temporal,
+                )
+                return
+            except Exception as e:
+                logger.debug(
+                    f"Custom-schema cognify failed ({e}); falling back to default cognify"
+                )
+
+        # Default extraction — robust across weak local models (Ollama).
+        await cognee.cognify(datasets=[dataset])
 
     async def _recall_async(
         self,
@@ -549,15 +566,24 @@ class MemoryClient:
         if self._init_cognee_if_needed():
             try:
                 import cognee
+                from anamnesis.config import load_config
+                config = load_config()
                 if hasattr(cognee, "memify"):
                     asyncio.run(cognee.memify())
-                # Re-run cognify with the custom schema to improve existing graph structure
-                asyncio.run(cognee.cognify(
-                    datasets=["anamnesis_codebase"],
-                    graph_model=CodeKnowledgeGraph,
-                    custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT,
-                    temporal_cognify=True,
-                ))
+                # Re-run cognify to enrich the graph. Use the custom schema only when
+                # enabled (needs a strong LLM); otherwise the robust default extraction.
+                if config.get("use_custom_graph_schema", False):
+                    try:
+                        asyncio.run(cognee.cognify(
+                            datasets=["anamnesis_codebase"],
+                            graph_model=CodeKnowledgeGraph,
+                            custom_prompt=CODE_ENTITY_EXTRACTION_PROMPT,
+                            temporal_cognify=config.get("use_temporal_cognify", False),
+                        ))
+                        return True
+                    except Exception as e:
+                        logger.debug(f"Custom-schema improve failed ({e}); using default cognify")
+                asyncio.run(cognee.cognify(datasets=["anamnesis_codebase"]))
                 return True
             except Exception as e:
                 logger.debug(f"Cognee improve failed: {e}")

@@ -21,10 +21,17 @@ DEFAULT_CONFIG = {
     # key required). "openai" uses a paid OpenAI key. See configure_llm_env().
     "llm_provider": "ollama",
     "llm_api_key": None,
-    "llm_model": "llama3.2:latest",
+    "llm_model": "llama3.1:8b",
     "embedding_model": "nomic-embed-text",
     "embedding_dimensions": 768,
     "ollama_base_url": "http://localhost:11434/v1",
+    # Advanced graph extraction (typed CodeKnowledgeGraph schema + temporal event
+    # tracking) needs a strong LLM that reliably emits strict structured JSON.
+    # Small local models (e.g. llama3.2:3b) can't, so these default OFF and we use
+    # Cognee's robust built-in extraction. Turn ON only with a strong model
+    # (OpenAI, or a large local model like llama3.1:70b).
+    "use_custom_graph_schema": False,
+    "use_temporal_cognify": False,
     "use_cloud": False,
 }
 
@@ -91,10 +98,17 @@ def configure_llm_env(config: Optional[Dict[str, Any]] = None) -> str:
 
     if provider == "ollama":
         base = os.getenv("LLM_ENDPOINT") or config.get("ollama_base_url") or "http://localhost:11434/v1"
-        chat_model = config.get("llm_model") or "llama3.2:latest"
+        host = base.replace("/v1", "")
+        chat_model = config.get("llm_model") or "llama3.1:8b"
         embed_model = config.get("embedding_model") or "nomic-embed-text"
         embed_dims = config.get("embedding_dimensions", 768)
-        embed_endpoint = base.replace("/v1", "") + "/api/embeddings"
+        # Cognee's OllamaEmbeddingEngine posts {"input": ...} and reads "embeddings"
+        # — that is Ollama's newer /api/embed batch endpoint, NOT /api/embeddings.
+        embed_endpoint = host + "/api/embed"
+        # The Ollama embedder loads a HuggingFace tokenizer (via `transformers`) for
+        # token counting. It has no default, so we must name one that matches the
+        # embedding model or Cognee queries huggingface.co/None and 401s.
+        hf_tokenizer = config.get("embedding_tokenizer") or "nomic-ai/nomic-embed-text-v1.5"
 
         # Cognee / LiteLLM configuration
         setdefault("LLM_PROVIDER", "ollama")
@@ -106,7 +120,8 @@ def configure_llm_env(config: Optional[Dict[str, Any]] = None) -> str:
         setdefault("EMBEDDING_ENDPOINT", embed_endpoint)
         setdefault("EMBEDDING_API_KEY", "ollama")
         setdefault("EMBEDDING_DIMENSIONS", embed_dims)
-        setdefault("EMBEDDING_MAX_TOKENS", 8192)
+        setdefault("EMBEDDING_MAX_COMPLETION_TOKENS", 8192)
+        setdefault("HUGGINGFACE_TOKENIZER", hf_tokenizer)
 
         # Raw `openai` SDK calls (llm_helper, consolidator) route through Ollama's
         # OpenAI-compatible endpoint.

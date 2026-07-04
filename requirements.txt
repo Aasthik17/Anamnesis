@@ -5,5 +5,6 @@ GitPython>=3.1.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 openai>=1.0.0
+transformers>=4.40.0  # tokenizer for Cognee's local Ollama embedding engine
 pytest>=7.0.0
 mcp>=1.0.0

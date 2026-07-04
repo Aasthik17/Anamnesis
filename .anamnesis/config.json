@@ -8,7 +8,7 @@
   "cognee_api_url": "https://api.cognee.ai",
   "llm_provider": "ollama",
   "llm_api_key": null,
-  "llm_model": "llama3.2:latest",
+  "llm_model": "llama3.1:8b",
   "embedding_model": "nomic-embed-text",
   "embedding_dimensions": 768,
   "ollama_base_url": "http://localhost:11434/v1",
