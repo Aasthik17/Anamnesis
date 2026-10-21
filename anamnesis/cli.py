@@ -900,6 +900,106 @@ def status_cmd():
 # Config commands
 # ---------------------------------------------------------------------------
 
+def _update_env_file(root: Path, updates: Dict[str, str]) -> None:
+    env_path = root / ".env"
+    try:
+        lines = []
+        if env_path.exists():
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    key = line.split("=")[0].strip() if "=" in line else ""
+                    if key not in updates:
+                        lines.append(line)
+        for k, v in updates.items():
+            lines.append(f"{k}={v}\n")
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except (PermissionError, OSError):
+        pass
+
+
+@config_app.command("set-backend")
+def set_backend_cmd(
+    backend: str = typer.Argument(..., help="LLM backend: ollama | openai | llama_cpp"),
+):
+    """Configure active LLM backend provider (ollama, openai, or llama_cpp)."""
+    root = find_project_root()
+    config = load_config(root)
+    b_norm = backend.strip().lower()
+    config["llm_provider"] = b_norm
+    config["llm_backend"] = b_norm
+    save_config(config, root)
+    _update_env_file(root, {"LLM_PROVIDER": b_norm})
+    console.print(f"\n[bold green]✓ LLM Backend configured to:[/bold green] [cyan]{b_norm}[/cyan]\n")
+
+
+@config_app.command("set-model")
+def set_model_cmd(
+    model: str = typer.Argument(..., help="Model identifier or path to quantized GGUF model"),
+):
+    """Configure model name or local GGUF model path."""
+    root = find_project_root()
+    config = load_config(root)
+    model_str = model.strip()
+    env_updates: Dict[str, str] = {"LLM_MODEL": model_str}
+
+    if model_str.endswith(".gguf") or "/" in model_str or "\\" in model_str:
+        config["model_path"] = model_str
+        config["llm_model"] = Path(model_str).name
+        env_updates["MODEL_PATH"] = model_str
+        env_updates["LLM_MODEL"] = Path(model_str).name
+        from anamnesis.llm_runtime import detect_quantization
+        detected = detect_quantization(model_str)
+        config["model_quantization"] = detected
+        env_updates["MODEL_QUANTIZATION"] = detected
+    else:
+        config["llm_model"] = model_str
+
+    save_config(config, root)
+    _update_env_file(root, env_updates)
+    console.print(f"\n[bold green]✓ Model configured to:[/bold green] [cyan]{model_str}[/cyan]\n")
+
+
+@config_app.command("set-quantization")
+def set_quantization_cmd(
+    quantization: str = typer.Argument(..., help="GGUF quantization level (e.g. Q4_K_M, Q5_K_M, Q8_0)"),
+):
+    """Configure quantization level for local GGUF models."""
+    root = find_project_root()
+    config = load_config(root)
+    q_norm = quantization.strip().upper()
+    config["model_quantization"] = q_norm
+    save_config(config, root)
+    _update_env_file(root, {"MODEL_QUANTIZATION": q_norm})
+    console.print(f"\n[bold green]✓ Quantization level configured to:[/bold green] [cyan]{q_norm}[/cyan]\n")
+
+
+@config_app.command("set-context")
+def set_context_cmd(
+    tokens: int = typer.Argument(..., help="Context tokens window (e.g. 2048, 4096, 8192)"),
+):
+    """Configure context window token size for inference."""
+    root = find_project_root()
+    config = load_config(root)
+    config["context_tokens"] = tokens
+    save_config(config, root)
+    _update_env_file(root, {"CONTEXT_TOKENS": str(tokens)})
+    console.print(f"\n[bold green]✓ Context window configured to:[/bold green] [cyan]{tokens}[/cyan] tokens\n")
+
+
+@config_app.command("set-memory-budget")
+def set_memory_budget_cmd(
+    budget_mb: int = typer.Argument(..., help="Memory budget in megabytes (e.g. 2048, 4096, 8192)"),
+):
+    """Configure runtime memory budget (MB) for quantized model loading."""
+    root = find_project_root()
+    config = load_config(root)
+    config["memory_budget_mb"] = budget_mb
+    save_config(config, root)
+    _update_env_file(root, {"MEMORY_BUDGET_MB": str(budget_mb)})
+    console.print(f"\n[bold green]✓ Memory budget configured to:[/bold green] [cyan]{budget_mb} MB[/cyan]\n")
+
+
 @config_app.command("set-cloud-key")
 def set_cloud_key_cmd(
     key: str = typer.Argument(..., help="Cognee Cloud API key from platform.cognee.ai"),
@@ -913,15 +1013,10 @@ def set_cloud_key_cmd(
     config["use_cloud"] = True
     save_config(config, root)
 
-    env_path = root / ".env"
-    lines = []
-    if env_path.exists():
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = [l for l in f.readlines() if not l.startswith("COGNEE_API_KEY") and not l.startswith("COGNEE_API_URL")]
-    lines.append(f"COGNEE_API_KEY={key.strip()}\n")
-    lines.append(f"COGNEE_API_URL={url.strip()}\n")
-    with open(env_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+    _update_env_file(root, {
+        "COGNEE_API_KEY": key.strip(),
+        "COGNEE_API_URL": url.strip(),
+    })
 
     console.print(f"\n[bold green]✓ Cognee Cloud API Key configured![/bold green]")
     console.print(f"  Endpoint: [cyan]{url}[/cyan]\n")
@@ -937,23 +1032,28 @@ def set_llm_key_cmd(
     config["llm_api_key"] = key.strip()
     save_config(config, root)
 
-    env_path = root / ".env"
-    lines = []
-    if env_path.exists():
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = [l for l in f.readlines() if not l.startswith("OPENAI_API_KEY")]
-    lines.append(f"OPENAI_API_KEY={key.strip()}\n")
-    with open(env_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+    _update_env_file(root, {"OPENAI_API_KEY": key.strip()})
 
     console.print(f"\n[bold green]✓ LLM API Key configured![/bold green]\n")
 
 
 @config_app.command("show")
 def config_show_cmd():
-    """Display active Anamnesis configuration and Cognee Cloud connection status."""
+    """Display active Anamnesis configuration, LLM runtime, and Cognee Cloud status."""
     root = find_project_root()
     config = load_config(root)
+
+    provider = os.getenv("LLM_PROVIDER") or config.get("llm_provider", "ollama")
+    model = os.getenv("LLM_MODEL") or config.get("llm_model", "llama3.1:8b")
+    model_path = os.getenv("MODEL_PATH") or config.get("model_path")
+    quantization = os.getenv("MODEL_QUANTIZATION") or config.get("model_quantization", "Q4_K_M")
+    budget = os.getenv("MEMORY_BUDGET_MB") or config.get("memory_budget_mb", 4096)
+    ctx = os.getenv("CONTEXT_TOKENS") or config.get("context_tokens", 4096)
+
+    import platform
+    is_mac = platform.system() == "Darwin"
+    coreml_raw = os.getenv("COREML_ENABLED") or str(config.get("coreml_enabled", False))
+    coreml_on = coreml_raw.lower() in ("true", "1", "yes")
 
     cognee_key = os.getenv("COGNEE_API_KEY") or config.get("cognee_api_key")
     llm_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or config.get("llm_api_key")
@@ -963,8 +1063,20 @@ def config_show_cmd():
             return "[yellow]Not set[/yellow]"
         return f"[green]{k[:4]}...{k[-4:]}[/green]" if len(k) > 8 else "[green]Configured[/green]"
 
+    accel_status = "[green]Metal / CoreML Enabled (Apple Silicon)[/green]" if (is_mac and coreml_on) else (
+        "[cyan]Metal available (macOS)[/cyan]" if is_mac else "[dim]Standard CPU / CUDA[/dim]"
+    )
+
     console.print("\n[bold cyan]⚙️  Anamnesis Configuration Dashboard[/bold cyan]\n")
     console.print(f"  Project Root:            [white]{root}[/white]")
+    console.print(f"  LLM Provider / Backend:  [bold cyan]{provider}[/bold cyan]")
+    console.print(f"  LLM Model:               [white]{model}[/white]")
+    if model_path:
+        console.print(f"  Model Path (GGUF):       [cyan]{model_path}[/cyan]")
+    console.print(f"  Model Quantization:      [white]{quantization}[/white]")
+    console.print(f"  Memory Budget:           [cyan]{budget} MB[/cyan]")
+    console.print(f"  Context Window:          [cyan]{ctx} tokens[/cyan]")
+    console.print(f"  Hardware Acceleration:   {accel_status}")
     console.print(f"  Cognee Cloud API Key:    {mask_key(cognee_key)}")
     console.print(f"  Cognee Cloud Endpoint:   [cyan]{config.get('cognee_api_url', 'https://api.cognee.ai')}[/cyan]")
     console.print(f"  LLM Provider Key:        {mask_key(llm_key)}")

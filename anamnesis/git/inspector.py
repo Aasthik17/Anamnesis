@@ -1,18 +1,25 @@
 import os
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-import git
+
+try:
+    import git
+except ImportError:
+    git = None
+
 from anamnesis.memory.schemas import CommitMemory
 
 class GitInspector:
     """Utility class to inspect git commits, staged diffs, and repository state."""
 
     @staticmethod
-    def get_repo(repo_path: Optional[Path] = None) -> Optional[git.Repo]:
+    def get_repo(repo_path: Optional[Path] = None) -> Optional[Any]:
+        if git is None:
+            return None
         try:
             target = repo_path or Path.cwd()
             return git.Repo(target, search_parent_directories=True)
-        except (git.InvalidGitRepositoryError, git.NoSuchPathError):
+        except (getattr(git, "InvalidGitRepositoryError", Exception), getattr(git, "NoSuchPathError", Exception)):
             return None
 
     @classmethod

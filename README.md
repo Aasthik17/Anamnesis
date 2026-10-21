@@ -158,8 +158,20 @@ Configuration lives in `.anamnesis/config.json` (per-repo) with environment over
 
 | Setting (`config.json`) | Default | Purpose |
 |---|---|---|
-| `llm_provider` | `ollama` | `ollama` (local & free) or `openai` (paid) |
-| `llm_model` | `llama3.1:8b` | Chat / entity-extraction model |
+| `llm_provider` | `ollama` | Backend provider: `ollama` (local & free), `llama_cpp` (quantized local GGUF), or `openai` (paid) |
+| `llm_backend` | `llama_cpp` | Target engine for local quantized models |
+| `llm_model` | `llama3.1:8b` | Chat / entity-extraction model name or identifier |
+| `model_path` | `null` | Absolute or relative path to a local quantized `.gguf` model file |
+| `model_quantization` | `Q4_K_M` | Precision level: `Q2_K`, `Q3_K`, `Q4_K_M`, `Q5_K_M`, `Q8_0` |
+| `context_tokens` | `4096` | Context window size in tokens |
+| `max_batch_size` | `512` | Batch size for prompt evaluation |
+| `n_gpu_layers` | `35` | Number of model layers offloaded to GPU/Metal |
+| `threads` | `8` | Number of CPU threads used for inference |
+| `memory_budget_mb` | `4096` | Runtime memory limit (MB) to prevent OOM on constrained machines |
+| `coreml_enabled` | `false` | Enable Apple Metal & CoreML hardware acceleration on macOS |
+| `coreml_compute_units` | `ALL` | CoreML compute unit target (`ALL`, `CPU_AND_GPU`, `CPU_ONLY`) |
+| `use_mlock` | `true` | Lock model into RAM to prevent memory swapping |
+| `use_mmap` | `true` | Memory-map model file for fast loading |
 | `embedding_model` | `nomic-embed-text` | Embedding model |
 | `embedding_dimensions` | `768` | Embedding vector size |
 | `ollama_base_url` | `http://localhost:11434/v1` | Ollama endpoint |
@@ -168,6 +180,70 @@ Configuration lives in `.anamnesis/config.json` (per-repo) with environment over
 | `reflection_threshold` | `3` | Auto-consolidate rules after every N bug fixes |
 
 > **Why the graph flags default off:** the typed `CodeFile → Function → BugPattern → Fix` schema and temporal event extraction require an LLM that reliably emits strict structured JSON. Small local models (e.g. `llama3.2:3b`) can't, so Anamnesis uses Cognee's robust built-in extraction by default and gracefully falls back if the typed schema fails. Turn both flags on with a strong model (OpenAI, or a large local model) to get the richer typed graph.
+
+### LLM Backends
+
+Anamnesis supports three first-class LLM backends:
+
+1. **`ollama`** (Default) — fully local and free, connects to a local Ollama daemon.
+2. **`llama_cpp`** — fully local, zero-daemon quantized inference with GGUF files, Apple Metal / CoreML acceleration, and strict memory budgeting.
+3. **`openai`** — remote cloud inference using standard OpenAI API keys.
+
+---
+
+### Local Quantized Inference via `llama.cpp`
+
+For maximum efficiency and offline operation without background server daemons, Anamnesis supports local quantized inference via `llama.cpp`.
+
+#### 1. Setup `llama-cpp-python`
+
+Standard installation:
+```bash
+pip install llama-cpp-python
+```
+
+**macOS with Apple Silicon (Metal & CoreML acceleration):**
+```bash
+CMAKE_ARGS="-DGGML_METAL=ON -DGGML_METAL_EMBEDDING=ON -DGGML_METAL_USE_BF16=ON" \
+pip install llama-cpp-python --upgrade --force-reinstall
+```
+
+#### 2. Quantization Overview
+
+Quantization compresses model weights from 16-bit floating point down to 2–8 bits, dramatically reducing RAM usage and enabling fast local execution:
+
+| Quantization | Relative Size | Quality Retention | Recommended Use Case |
+|---|---|---|---|
+| **`Q2_K`** | ~30% of fp16 | Low | Ultra-constrained devices (< 4 GB RAM) |
+| **`Q3_K`** | ~40% of fp16 | Moderate | Low-RAM systems (< 6 GB RAM) |
+| **`Q4_K_M`** *(Default)* | ~50% of fp16 | Very High (~99% perplexity) | **Best balance** of speed, memory, and reasoning |
+| **`Q5_K_M`** | ~60% of fp16 | Near Lossless | When memory permits (8 GB - 16 GB RAM) |
+| **`Q8_0`** | ~80% of fp16 | Lossless | Highest precision, requires 12 GB+ RAM |
+
+#### 3. Memory Budget Tuning & Safe Fallbacks
+
+Local models can be memory-heavy. Anamnesis introduces explicit memory budgeting via `memory_budget_mb`:
+- **Conservative target for 7B/8B Q4 models on Apple Silicon:** 4096 MB – 8192 MB RAM.
+- **Adaptive parameters:** When memory constraints are tight (e.g. < 2048 MB), Anamnesis automatically scales down `context_tokens` (from 4096 to 2048/1024), reduces `max_batch_size`, and adjusts `n_gpu_layers` to protect against out-of-memory (OOM) crashes.
+- **Safe fallback:** If `llama_cpp` is selected but the package is not installed or the model file is not found, Anamnesis surfaces clear actionable diagnostics and falls back safely to smart pattern analysis.
+
+#### 4. Example `.env` for `llama.cpp`
+
+```env
+LLM_PROVIDER=llama_cpp
+LLM_MODEL=llama-3.1-8b-instruct-q4_k_m.gguf
+MODEL_PATH=/models/llama-3.1-8b-instruct-q4_k_m.gguf
+MODEL_QUANTIZATION=Q4_K_M
+CONTEXT_TOKENS=4096
+MAX_BATCH_SIZE=512
+N_GPU_LAYERS=35
+THREADS=8
+MEMORY_BUDGET_MB=4096
+COREML_ENABLED=true
+COREML_COMPUTE_UNITS=ALL
+USE_MLOCK=true
+USE_MMAP=true
+```
 
 ### Example `.env` (local Ollama — the default)
 
@@ -284,11 +360,16 @@ anamnesis status
 ```
 
 ### `anamnesis config`
-Manage LLM provider and Cognee Cloud settings.
+Manage LLM provider, quantized inference, and Cognee Cloud settings.
 ```bash
-anamnesis config show                       # active configuration dashboard
-anamnesis config set-llm-key <openai_key>   # configure a paid LLM key
-anamnesis config set-cloud-key <cognee_key> # configure Cognee Cloud
+anamnesis config show                              # active configuration dashboard
+anamnesis config set-backend llama_cpp             # set backend: ollama | openai | llama_cpp
+anamnesis config set-model /path/to/model.gguf     # configure local GGUF model path or name
+anamnesis config set-quantization Q4_K_M           # configure GGUF quantization level
+anamnesis config set-context 4096                  # configure context window (tokens)
+anamnesis config set-memory-budget 4096            # configure runtime memory limit (MB)
+anamnesis config set-llm-key <openai_key>          # configure a paid LLM key
+anamnesis config set-cloud-key <cognee_key>        # configure Cognee Cloud
 ```
 
 ### `anamnesis mcp-serve`

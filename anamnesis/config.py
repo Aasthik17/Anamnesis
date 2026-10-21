@@ -1,5 +1,6 @@
 import os
 import json
+import platform
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -18,7 +19,8 @@ DEFAULT_CONFIG = {
     "cognee_api_key": None,
     "cognee_api_url": "https://api.cognee.ai",
     # LLM / embedding backend. "ollama" runs everything locally and free (no API
-    # key required). "openai" uses a paid OpenAI key. See configure_llm_env().
+    # key required). "openai" uses a paid OpenAI key. "llama_cpp" uses local
+    # quantized GGUF models. See configure_llm_env().
     "llm_provider": "ollama",
     "llm_api_key": None,
     "llm_model": "llama3.1:8b",
@@ -33,6 +35,20 @@ DEFAULT_CONFIG = {
     "use_custom_graph_schema": False,
     "use_temporal_cognify": False,
     "use_cloud": False,
+
+    # New llama.cpp / quantized inference settings
+    "llm_backend": "llama_cpp",
+    "model_path": None,
+    "model_quantization": "Q4_K_M",
+    "context_tokens": 4096,
+    "max_batch_size": 512,
+    "n_gpu_layers": 35,
+    "threads": 8,
+    "use_mlock": True,
+    "use_mmap": True,
+    "memory_budget_mb": 4096,
+    "coreml_enabled": False,
+    "coreml_compute_units": "ALL",
 }
 
 def find_project_root(start_path: Optional[Path] = None) -> Path:
@@ -73,19 +89,20 @@ def save_config(config: Dict[str, Any], repo_root: Optional[Path] = None) -> Non
 
 def configure_llm_env(config: Optional[Dict[str, Any]] = None) -> str:
     """
-    Export the environment variables that Cognee/LiteLLM and the raw OpenAI SDK
-    need, based on the configured LLM provider.
+    Export the environment variables that Cognee/LiteLLM, llama.cpp runtime,
+    and the raw OpenAI SDK need, based on the configured LLM provider.
 
-    Returns the resolved provider name ("ollama" or "openai").
+    Returns the resolved provider name ("ollama", "openai", or "llama_cpp").
 
     Existing environment variables always win, so anything already set in .env or
     the shell overrides these defaults — this only fills in the blanks.
 
-    - "ollama"  → fully local & free. Points chat + embeddings at a local Ollama
-                  server (default http://localhost:11434). No API key required.
-                  Requires: `ollama serve` running and the models pulled, e.g.
-                  `ollama pull llama3.1:8b nomic-embed-text`.
-    - "openai"  → uses OPENAI_API_KEY (paid).
+    - "ollama"    → fully local & free. Points chat + embeddings at a local Ollama
+                    server (default http://localhost:11434). No API key required.
+    - "llama_cpp" → local quantized inference with GGUF models. Supports Metal / CoreML
+                    acceleration on Apple Silicon, memory budgeting, and configurable
+                    quantization (e.g. Q4_K_M).
+    - "openai"    → uses OPENAI_API_KEY (paid).
     """
     if config is None:
         config = load_config()
@@ -95,6 +112,66 @@ def configure_llm_env(config: Optional[Dict[str, Any]] = None) -> str:
             os.environ[key] = str(value)
 
     provider = (os.getenv("LLM_PROVIDER") or config.get("llm_provider") or "openai").lower()
+
+    if provider in ("llama_cpp", "llamacpp"):
+        provider = "llama_cpp"
+        model_path = os.getenv("MODEL_PATH") or config.get("model_path")
+        quantization = os.getenv("MODEL_QUANTIZATION") or config.get("model_quantization") or "Q4_K_M"
+        context_tokens = os.getenv("CONTEXT_TOKENS") or str(config.get("context_tokens", 4096))
+        max_batch_size = os.getenv("MAX_BATCH_SIZE") or str(config.get("max_batch_size", 512))
+        n_gpu_layers = os.getenv("N_GPU_LAYERS") or str(config.get("n_gpu_layers", 35))
+        threads = os.getenv("THREADS") or str(config.get("threads", 8))
+        memory_budget_mb = os.getenv("MEMORY_BUDGET_MB") or str(config.get("memory_budget_mb", 4096))
+        use_mlock = os.getenv("USE_MLOCK") or str(config.get("use_mlock", True)).lower()
+        use_mmap = os.getenv("USE_MMAP") or str(config.get("use_mmap", True)).lower()
+
+        # CoreML / Metal settings
+        coreml_env = os.getenv("COREML_ENABLED")
+        if coreml_env is not None:
+            coreml_enabled = coreml_env.lower() in ("true", "1", "yes", "on")
+        else:
+            coreml_enabled = bool(config.get("coreml_enabled", False))
+
+        coreml_compute_units = os.getenv("COREML_COMPUTE_UNITS") or config.get("coreml_compute_units", "ALL")
+
+        chat_model = os.getenv("LLM_MODEL") or config.get("llm_model")
+        if not chat_model and model_path:
+            chat_model = Path(model_path).name
+        if not chat_model:
+            chat_model = f"llama-3.1-8b-instruct-{quantization.lower()}.gguf"
+
+        setdefault("LLM_PROVIDER", "llama_cpp")
+        setdefault("LLM_BACKEND", "llama_cpp")
+        setdefault("LLM_MODEL", chat_model)
+        setdefault("ANAMNESIS_LLM_MODEL", chat_model)
+        if model_path:
+            setdefault("MODEL_PATH", str(model_path))
+        setdefault("MODEL_QUANTIZATION", quantization)
+        setdefault("CONTEXT_TOKENS", str(context_tokens))
+        setdefault("MAX_BATCH_SIZE", str(max_batch_size))
+        setdefault("N_GPU_LAYERS", str(n_gpu_layers))
+        setdefault("THREADS", str(threads))
+        setdefault("MEMORY_BUDGET_MB", str(memory_budget_mb))
+        setdefault("USE_MLOCK", str(use_mlock))
+        setdefault("USE_MMAP", str(use_mmap))
+        setdefault("COREML_COMPUTE_UNITS", coreml_compute_units)
+
+        if platform.system() == "Darwin" and coreml_enabled:
+            setdefault("COREML_ENABLED", "true")
+            setdefault("GGML_METAL", "1")
+            setdefault("GGML_METAL_EMBEDDING", "1")
+            setdefault("GGML_METAL_USE_BF16", "1")
+        else:
+            setdefault("COREML_ENABLED", str(coreml_enabled).lower())
+
+        # Optional OpenAI compatibility if local llama.cpp server is configured
+        llama_endpoint = os.getenv("LLM_ENDPOINT") or os.getenv("OPENAI_BASE_URL")
+        if llama_endpoint:
+            setdefault("OPENAI_BASE_URL", llama_endpoint)
+            setdefault("OPENAI_API_KEY", "llama_cpp")
+            setdefault("LLM_API_KEY", "llama_cpp")
+
+        return provider
 
     if provider == "ollama":
         base = os.getenv("LLM_ENDPOINT") or config.get("ollama_base_url") or "http://localhost:11434/v1"
