@@ -1,106 +1,113 @@
 # Anamnesis
 
-> **A CLI companion that gives your codebase a long-term memory, so every AI-assisted coding session starts smart instead of starting blank.**
+> **Continuous, long-term codebase memory infrastructure for developer workflows and AI coding agents.**
 
-[![Powered By Cognee AI](https://img.shields.io/badge/Powered%20By-Cognee%20AI-6510F4?style=for-the-badge)](https://cognee.ai)
-[![Local & Free via Ollama](https://img.shields.io/badge/LLM-Local%20%26%20Free%20(Ollama)-000000?style=for-the-badge)](https://ollama.com)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](#11-license)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Architecture: Hybrid Graph + Vector](https://img.shields.io/badge/Architecture-Hybrid%20Graph%20%2B%20Vector-6510F4?style=flat-square)](https://cognee.ai)
+[![Local Inference: llama.cpp / Ollama](https://img.shields.io/badge/Inference-Local%20%26%20Private%20(GGUF%20%2F%20Ollama)-000000?style=flat-square)](https://github.com/ggerganov/llama.cpp)
+[![MCP Compatible](https://img.shields.io/badge/Protocol-MCP%20Enabled-blueviolet?style=flat-square)](https://modelcontextprotocol.io)
+[![Tests: Pytest Passed](https://img.shields.io/badge/Tests-Passing-brightgreen?style=flat-square)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
 ---
 
-## 🏆 Built for the Cognee AI Hackathon
+## Overview
 
-Anamnesis is a **codebase memory infrastructure showcase** built on **[Cognee AI](https://cognee.ai)**. Rather than treating Cognee as a basic vector database, it exercises the full **Cognee Memory Lifecycle** — and runs **100% locally and free** using [Ollama](https://ollama.com) (no paid API keys required).
+Modern AI coding assistants suffer from **session amnesia**. Context windows reset between sessions, while critical engineering decisions, subtle bug root causes, and architectural lessons remain trapped across ephemeral chat windows, closed pull requests, and fragmented team discussions. When a developer or AI agent edits related services weeks later, identical bugs and anti-patterns are frequently reintroduced.
+
+**Anamnesis** solves this fundamental disconnect by providing a persistent, evolving **codebase knowledge graph** that sits alongside your standard Git workflow. It transforms transient code modifications and post-mortems into queryable long-term memory. 
+
+Whether operated as an automated Git pre-commit guard, a terminal CLI, or a native **Model Context Protocol (MCP)** server for AI IDEs like Claude Code and Cursor, Anamnesis ensures that every coding session starts with full historical context.
+
+---
+
+## Key Highlights
+
+- **Full Memory Lifecycle Engine**: Implements end-to-end memory management:
+  - `remember`: Structured ingestion of Git diffs, bug post-mortems, and architectural decision records (ADRs).
+  - `recall`: Hybrid graph traversal + vector retrieval surfaced at commit time or on-demand.
+  - `memify`: Unsupervised clustering that consolidates recurring bug patterns into team-wide architectural rules.
+  - `improve`: Dynamic edge-weight adaptation and graph enrichment.
+  - `forget`: Surgical memory decay and pruning for deleted or refactored components.
+- **Context-Aware Git Pre-Commit Hook**: Analyzes staged diffs against historical bug memories to flag regressions and suggest validated fixes before changes are committed.
+- **Native Model Context Protocol (FastMCP)**: Directly exposes codebase memory tools (`recall_codebase_memory`, `remember_bug_fix`, `get_coding_rules`) to modern AI agents (Cursor, Claude Code, Windsurf).
+- **100% Local & Privacy-First Execution**: Zero telemetry and zero required external API dependencies. Native support for local quantized inference via `llama.cpp` (GGUF with Apple Metal / CoreML hardware acceleration) and Ollama, alongside optional OpenAI backends.
+- **Dual-Layer Fault Resilience**: Ingests into Cognee's hybrid graph/vector store while maintaining a local JSON ground truth. If vector stores or LLM endpoints are unavailable, the system gracefully falls back to local lexical scoring without disrupting developer flow.
+- **Interactive Knowledge Graph Visualizer**: Built-in D3.js force-directed visualization to explore relationships between files, commits, bug patterns, and synthesized rules with interactive metadata inspection.
+
+---
+
+## System Architecture
 
 ```
-                  ┌───────────────────────────────────────────────┐
-                  │          Cognee Memory Lifecycle Engine       │
-                  └───────────────────────┬───────────────────────┘
-                                          │
-    ┌───────────────────────┬─────────────┴─────────┬───────────────────────┐
-    ▼                       ▼                       ▼                       ▼
-┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│  remember()   │   │   recall()    │   │   memify()    │   │   forget()    │
-│  ingests git  │   │ pre-commit    │   │ consolidates  │   │ decays dead   │
-│ history & bugs│   │ graph query   │   │  team rules   │   │ code memory   │
-└───────────────┘   └───────────────┘   └───────────────┘   └───────────────┘
+                                  DEVELOPER WORKSPACE
+       ┌───────────────────────────────┬───────────────────────────────┐
+       │                               │                               │
+       ▼                               ▼                               ▼
+  [Git Workflow]               [Terminal CLI]                   [AI Agents / IDE]
+  Staged Diffs & Hooks         Typer + Rich Engine              Cursor, Claude Code (MCP)
+       │                               │                               │
+       └───────────────────────┬───────┴───────────────────────────────┘
+                               │
+                               ▼
+               ┌───────────────────────────────┐
+               │         ANAMNESIS CORE        │
+               │ ───────────────────────────── │
+               │ • Git Inspector & Pre-Commit  │
+               │ • Pattern Consolidator Engine │
+               │ • Memory Client & Fallback    │
+               │ • FastMCP Server Interface    │
+               └───────────────┬───────────────┘
+                               │
+                               ▼
+               ┌───────────────────────────────┐
+               │    HYBRID MEMORY SUBSYSTEM    │
+               │ ───────────────────────────── │
+               │ • Cognee Graph + Vector Store │
+               │ • Typed Code Ontology Schemas │
+               │ • Local JSON Ground Truth     │
+               └───────────────┬───────────────┘
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+    [Local Private Inference]       [Cloud Providers]
+    • llama.cpp (GGUF / Metal)      • OpenAI API
+    • Ollama (llama3.1 / nomic)     • Cognee Cloud
 ```
 
-| Cognee Primitive | Implementation | CLI Command |
+### Memory Lifecycle Walkthrough
+
+| Lifecycle Stage | Underlying Mechanism | CLI Interface |
 |---|---|---|
-| **`remember()`** | Ingests git commit diffs, bug root causes, and architecture decisions into the graph | `anamnesis remember-bug`<br>`anamnesis remember` |
-| **`recall()`** | Hybrid graph traversal + vector search to surface contextual warnings | `anamnesis ask`<br>`anamnesis timeline`<br>Git pre-commit hook |
-| **`memify()`** | Clusters near-duplicate bug reports into generalized team coding conventions | `anamnesis reflect`<br>`anamnesis rules` |
-| **`improve()`** | Re-indexes graph relationships, adapts edge weights, and enriches nodes | `anamnesis improve`<br>`anamnesis feedback` |
-| **`forget()`** | Decays stale memory nodes when code is deleted or refactored | `anamnesis forget` |
+| **`remember()`** | Extracts entities (affected files, error patterns, root causes) and maps them into graph nodes and vector embeddings. | `anamnesis remember-bug`<br>`anamnesis remember` |
+| **`recall()`** | Executes hybrid retrieval (graph neighbor expansion + dense vector similarity) to surface contextual warnings. | `anamnesis ask`<br>`anamnesis timeline`<br>Git pre-commit hook |
+| **`memify()`** | Clusters cross-file incidents using semantic similarity to formulate generalized engineering guidelines. | `anamnesis reflect`<br>`anamnesis rules` |
+| **`improve()`** | Re-indexes relational edges, recalculates node centrality, and applies feedback weighting. | `anamnesis improve`<br>`anamnesis feedback` |
+| **`forget()`** | Decays confidence scores or removes orphaned memory nodes when codebases undergo major refactoring. | `anamnesis forget` |
 
 ---
 
-## 1. The Problem
+## Technical Stack
 
-Every AI coding assistant today suffers from **amnesia**. You fix a subtle race condition or null pointer bug in `user_service.py` on Monday. On Friday, a teammate (or you, on a different feature branch) writes the exact same flaw in `payment_service.py`. The assistant has no idea it already saw this pattern, because LLM context resets every session and lives in isolated chat windows.
-
-The true knowledge of a codebase — *why architectural decisions were made, what broke last time someone touched a module, and which conventions the team quietly enforces* — lives scattered across closed GitHub issues, old PR comments, Slack threads, or a senior engineer's head. None of it is queryable at the exact moment a developer is about to repeat the same mistake.
-
----
-
-## 2. The Idea: Codebase Memory Infrastructure
-
-**Anamnesis** sits next to your standard git workflow and builds a **persistent, evolving knowledge graph** of your codebase using **[Cognee AI](https://cognee.ai)**. It watches git commits, ingests bug fixes and their root causes, and surfaces contextual warnings before a commit is finalized.
-
-It exercises the full **Cognee Memory Lifecycle**:
-1. **Remember** — Ingest git history, bug root causes, and architectural decisions into graph/vector memory.
-2. **Recall** — Query the graph before committing or on-demand via natural language Q&A.
-3. **Memify / Reflect** — Consolidate recurring bug patterns across files into team-wide coding rules.
-4. **Improve** — Optimize memory weights and relationship edges post-ingestion.
-5. **Forget** — Surgically decay or prune stale memories when code is refactored or deleted.
+| Layer | Technologies |
+|---|---|
+| **Core Runtime** | Python 3.10+, Typer, Pydantic V2, Rich |
+| **Knowledge Graph & Memory** | Cognee, NetworkX, Vector Indexing, Hybrid Graph-Vector Traversal |
+| **Local LLM Engine** | `llama.cpp` (GGUF, Metal/CoreML acceleration), Ollama |
+| **Developer Integration** | GitPython (Git pre-commit hooks), FastMCP (Model Context Protocol) |
+| **Interactive Visualization** | D3.js (Force-directed graph renderer, embedded HTML) |
+| **Testing & Quality Assurance** | Pytest, Strict Type Annotations, Defensive Fallback Handlers |
 
 ---
 
-## 3. Architecture
-
-```
-┌───────────────────────────────────────┐
-│          Git Repository (Local)       │
-│      commits / diffs / staged files   │
-└───────────────────┬───────────────────┘
-                    │ Git hook (.git/hooks/pre-commit)
-                    ▼
-┌───────────────────────────────────────┐
-│          Anamnesis CLI (Python)       │
-│    Typer commands + Rich UI + MCP     │
-│  init · remember-bug · ask · reflect  │
-│  visualize · timeline · forget · …    │
-└───────────────────┬───────────────────┘
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│           Cognee Memory Layer         │
-│   remember / recall / memify / forget │
-│   (Graph DB + Vector store engine)    │
-└───────────────────┬───────────────────┘
-                    │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-┌───────────────────┐  ┌───────────────────┐
-│   Ollama (local)  │  │  OpenAI / Cognee  │
-│  llama3.1:8b +    │  │  Cloud (optional) │
-│  nomic-embed-text │  │                   │
-└───────────────────┘  └───────────────────┘
-```
-
-**Local JSON store as ground truth.** Every memory is also written to `.anamnesis/memories.json`. If Cognee/embeddings are ever unavailable, recall gracefully falls back to local keyword scoring, so the CLI never hard-fails.
-
----
-
-## 4. Quickstart & Installation
+## Installation & Setup
 
 ### Prerequisites
-- **Python 3.10+** and **Git**
-- **[Ollama](https://ollama.com/download)** for the default local, free LLM + embeddings backend
+- **Python 3.10+**
+- **Git**
+- *(Optional, for local inference)* **[Ollama](https://ollama.com)** or a local `.gguf` model for `llama.cpp`
 
-### Step 1 — Install Anamnesis
+### 1. Clone & Install
 
 ```bash
 git clone https://github.com/your-username/Anamnesis.git
@@ -112,328 +119,245 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-### Step 2 — Set up the local LLM backend (Ollama)
+### 2. Configure Your Inference Provider
 
-Anamnesis defaults to running everything locally and free via Ollama — no OpenAI key needed.
-
+#### Option A: Local & Free via Ollama (Recommended Default)
 ```bash
-# 1. Install Ollama:  https://ollama.com/download   (or: brew install ollama)
-# 2. Start the server (keep it running):
-ollama serve
+# Pull default models
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
 
-# 3. Pull the models (one-time, ~5 GB total):
-ollama pull llama3.1:8b        # chat / entity extraction
-ollama pull nomic-embed-text   # embeddings
+# Ensure the Ollama server is running
+ollama serve
 ```
 
-> The `transformers` package (installed via `requirements.txt`) is required — Cognee's local Ollama embedder uses a HuggingFace tokenizer for token counting.
+#### Option B: Standalone Quantized GGUF via `llama.cpp`
+For single-binary offline operation with zero background daemons and hardware-accelerated inference:
+```bash
+# For Apple Silicon with Metal & CoreML acceleration
+CMAKE_ARGS="-DGGML_METAL=ON -DGGML_METAL_EMBEDDING=ON -DGGML_METAL_USE_BF16=ON" \
+pip install llama-cpp-python --upgrade --force-reinstall
 
-### Step 3 — Initialize in your target repo
+# Configure model and hardware parameters
+anamnesis config set-backend llama_cpp
+anamnesis config set-model /path/to/llama-3.1-8b-instruct-q4_k_m.gguf
+anamnesis config set-quantization Q4_K_M
+anamnesis config set-memory-budget 4096
+```
 
+#### Option C: Cloud Providers (OpenAI)
+```bash
+anamnesis config set-backend openai
+anamnesis config set-llm-key sk-...
+```
+
+---
+
+## Quickstart
+
+### Step 1: Initialize Repository Memory
+Navigate to any Git project repository and run:
 ```bash
 anamnesis init
 ```
-*Ingests recent git commit history into Cognee memory and installs the Git pre-commit hook.*
+This inspects recent commit history to establish baseline project context and automatically installs the Git pre-commit hook into `.git/hooks/pre-commit`.
 
-### Step 4 — Try it
-
+### Step 2: Ingest a Bug Fix
+Record a resolved bug, detailing its root cause and remediation pattern:
 ```bash
 anamnesis remember-bug \
   --file "services/user_service.py" \
-  --title "NullPointerException in fetch_user_profile" \
-  --cause "Unchecked response.json() on 204 status" \
-  --fix "Added HTTP status check and defensive .get() chaining"
+  --title "Unhandled Empty Response on User Ingestion" \
+  --cause "Missing 204 No Content validation prior to response.json() parsing" \
+  --fix "Added explicit HTTP status verification and defensive dictionary access"
+```
+*Tip: You can also run `anamnesis remember-bug --auto` to automatically analyze staged Git diffs with your configured LLM.*
 
-anamnesis ask "null pointer api response"
+### Step 3: Contextual Querying
+Query your codebase's institutional memory using natural language:
+```bash
+anamnesis ask "Why do we validate API status codes in the service layer?"
+```
+
+### Step 4: Rule Synthesis (`memify`)
+When multiple related issues are logged across different services, synthesize them into a permanent codebase convention:
+```bash
+# Consolidate related patterns into high-level rules
+anamnesis reflect
+
+# Inspect active team coding conventions
+anamnesis rules
+```
+
+---
+
+## Advanced Usage & Capabilities
+
+### 1. Automated Git Regression Prevention
+
+Once initialized, Anamnesis runs seamlessly as part of your Git workflow. When a developer stages changes and runs `git commit`, the pre-commit hook:
+1. Extracts the staged diff and affected file paths.
+2. Performs a similarity search against the knowledge graph.
+3. Warns the developer if staged code re-introduces known failure modes:
+
+```
+┌── [!] ANAMNESIS REGRESSION WARNING ────────────────────────────────────────┐
+│ Staged file: services/payment_service.py                                    │
+│ Warning: Similar failure mode previously identified in user_service.py      │
+│ Root Cause: Unchecked external response payload causing null dereference.  │
+│ Recommended Fix: Enforce status check and fallback defaults prior to read. │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. AI Editor Integration via Model Context Protocol (MCP)
+
+Anamnesis provides a native MCP server, enabling AI development environments such as **Claude Code**, **Cursor**, and **Windsurf** to access your codebase's memory layer directly.
+
+Start the server:
+```bash
+# Standard I/O (default for desktop extensions)
+anamnesis mcp-serve
+
+# HTTP SSE transport
+anamnesis mcp-serve --transport http --port 8765
+```
+
+Add to your Claude Desktop config (`~/.claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "anamnesis": {
+      "command": "anamnesis",
+      "args": ["mcp-serve"]
+    }
+  }
+}
+```
+
+**Exposed MCP Tools:**
+- `recall_codebase_memory(query)`: Semantically retrieves historical bugs, design decisions, and fixes.
+- `remember_bug_fix(file_path, title, root_cause, fix_applied)`: Records new bug post-mortems directly from conversation.
+- `get_coding_rules()`: Fetches synthesized team coding rules.
+- `get_memory_status()`: Summarizes active memory nodes, rules, and hook configurations.
+- `forget_memory(identifier)`: Prunes obsolete memories.
+
+### 3. Interactive Knowledge Graph Visualizer
+
+Generate and inspect an interactive, force-directed graph of all codebase memories, provenance chains, and synthesized rules:
+
+```bash
+# Launch interactive graph in your default browser
 anamnesis visualize
+
+# Export standalone HTML visualization
+anamnesis visualize -o graph.html
 ```
+
+- **Interactive Navigation**: Drag nodes, zoom, pan, and filter by node classifications (`bug_fix`, `rule`, `commit`, `doc`).
+- **Deep Metadata Inspection**: Clicking any node opens a contextual drawer detailing root causes, fixes, affected files, and timestamped provenance.
 
 ---
 
-## 5. Configuration
+## CLI Command Reference
 
-Configuration lives in `.anamnesis/config.json` (per-repo) with environment overrides from `.env`. **Environment variables always win**, so `.env` overrides `config.json`.
-
-### LLM / embedding backend
-
-| Setting (`config.json`) | Default | Purpose |
-|---|---|---|
-| `llm_provider` | `ollama` | Backend provider: `ollama` (local & free), `llama_cpp` (quantized local GGUF), or `openai` (paid) |
-| `llm_backend` | `llama_cpp` | Target engine for local quantized models |
-| `llm_model` | `llama3.1:8b` | Chat / entity-extraction model name or identifier |
-| `model_path` | `null` | Absolute or relative path to a local quantized `.gguf` model file |
-| `model_quantization` | `Q4_K_M` | Precision level: `Q2_K`, `Q3_K`, `Q4_K_M`, `Q5_K_M`, `Q8_0` |
-| `context_tokens` | `4096` | Context window size in tokens |
-| `max_batch_size` | `512` | Batch size for prompt evaluation |
-| `n_gpu_layers` | `35` | Number of model layers offloaded to GPU/Metal |
-| `threads` | `8` | Number of CPU threads used for inference |
-| `memory_budget_mb` | `4096` | Runtime memory limit (MB) to prevent OOM on constrained machines |
-| `coreml_enabled` | `false` | Enable Apple Metal & CoreML hardware acceleration on macOS |
-| `coreml_compute_units` | `ALL` | CoreML compute unit target (`ALL`, `CPU_AND_GPU`, `CPU_ONLY`) |
-| `use_mlock` | `true` | Lock model into RAM to prevent memory swapping |
-| `use_mmap` | `true` | Memory-map model file for fast loading |
-| `embedding_model` | `nomic-embed-text` | Embedding model |
-| `embedding_dimensions` | `768` | Embedding vector size |
-| `ollama_base_url` | `http://localhost:11434/v1` | Ollama endpoint |
-| `use_custom_graph_schema` | `false` | Use the typed `CodeKnowledgeGraph` schema (needs a strong LLM) |
-| `use_temporal_cognify` | `false` | Track bug-pattern evolution over time (needs a strong LLM) |
-| `reflection_threshold` | `3` | Auto-consolidate rules after every N bug fixes |
-
-> **Why the graph flags default off:** the typed `CodeFile → Function → BugPattern → Fix` schema and temporal event extraction require an LLM that reliably emits strict structured JSON. Small local models (e.g. `llama3.2:3b`) can't, so Anamnesis uses Cognee's robust built-in extraction by default and gracefully falls back if the typed schema fails. Turn both flags on with a strong model (OpenAI, or a large local model) to get the richer typed graph.
-
-### LLM Backends
-
-Anamnesis supports three first-class LLM backends:
-
-1. **`ollama`** (Default) — fully local and free, connects to a local Ollama daemon.
-2. **`llama_cpp`** — fully local, zero-daemon quantized inference with GGUF files, Apple Metal / CoreML acceleration, and strict memory budgeting.
-3. **`openai`** — remote cloud inference using standard OpenAI API keys.
+| Command | Description |
+|---|---|
+| `anamnesis init` | Initializes repository tracking and installs Git pre-commit hooks. |
+| `anamnesis remember-bug` | Records a bug post-mortem (`--auto` flag summarizes staged Git diffs). |
+| `anamnesis remember` | Ingests arbitrary architectural documents, ADRs, or technical notes. |
+| `anamnesis ask <query>` | Hybrid search query over the codebase memory graph. |
+| `anamnesis timeline <query>` | Temporal retrieval showing how specific bug patterns evolved over time. |
+| `anamnesis reflect` | Executes memory consolidation to synthesize higher-order team rules. |
+| `anamnesis rules` | Displays all active synthesized architectural and coding rules. |
+| `anamnesis improve` | Re-indexes relational edges and adapts node confidence weights. |
+| `anamnesis feedback` | Records relevance feedback (`--helpful` / `--not-helpful`) to tune future ranking. |
+| `anamnesis forget <id/path>` | Surgically decays or deletes stale memories by ID or target file path. |
+| `anamnesis visualize` | Generates and displays an interactive D3.js knowledge graph. |
+| `anamnesis status` | Displays runtime statistics, memory counts, and hook status. |
+| `anamnesis config` | Inspects and updates LLM backends, quantization, and hardware settings. |
+| `anamnesis mcp-serve` | Runs the Model Context Protocol (MCP) server for AI editor integration. |
 
 ---
 
-### Local Quantized Inference via `llama.cpp`
+## Configuration & Environment
 
-For maximum efficiency and offline operation without background server daemons, Anamnesis supports local quantized inference via `llama.cpp`.
-
-#### 1. Setup `llama-cpp-python`
-
-Standard installation:
-```bash
-pip install llama-cpp-python
-```
-
-**macOS with Apple Silicon (Metal & CoreML acceleration):**
-```bash
-CMAKE_ARGS="-DGGML_METAL=ON -DGGML_METAL_EMBEDDING=ON -DGGML_METAL_USE_BF16=ON" \
-pip install llama-cpp-python --upgrade --force-reinstall
-```
-
-#### 2. Quantization Overview
-
-Quantization compresses model weights from 16-bit floating point down to 2–8 bits, dramatically reducing RAM usage and enabling fast local execution:
-
-| Quantization | Relative Size | Quality Retention | Recommended Use Case |
-|---|---|---|---|
-| **`Q2_K`** | ~30% of fp16 | Low | Ultra-constrained devices (< 4 GB RAM) |
-| **`Q3_K`** | ~40% of fp16 | Moderate | Low-RAM systems (< 6 GB RAM) |
-| **`Q4_K_M`** *(Default)* | ~50% of fp16 | Very High (~99% perplexity) | **Best balance** of speed, memory, and reasoning |
-| **`Q5_K_M`** | ~60% of fp16 | Near Lossless | When memory permits (8 GB - 16 GB RAM) |
-| **`Q8_0`** | ~80% of fp16 | Lossless | Highest precision, requires 12 GB+ RAM |
-
-#### 3. Memory Budget Tuning & Safe Fallbacks
-
-Local models can be memory-heavy. Anamnesis introduces explicit memory budgeting via `memory_budget_mb`:
-- **Conservative target for 7B/8B Q4 models on Apple Silicon:** 4096 MB – 8192 MB RAM.
-- **Adaptive parameters:** When memory constraints are tight (e.g. < 2048 MB), Anamnesis automatically scales down `context_tokens` (from 4096 to 2048/1024), reduces `max_batch_size`, and adjusts `n_gpu_layers` to protect against out-of-memory (OOM) crashes.
-- **Safe fallback:** If `llama_cpp` is selected but the package is not installed or the model file is not found, Anamnesis surfaces clear actionable diagnostics and falls back safely to smart pattern analysis.
-
-#### 4. Example `.env` for `llama.cpp`
+Project configurations are stored in `.anamnesis/config.json` with environment variable overrides from `.env`.
 
 ```env
-LLM_PROVIDER=llama_cpp
-LLM_MODEL=llama-3.1-8b-instruct-q4_k_m.gguf
-MODEL_PATH=/models/llama-3.1-8b-instruct-q4_k_m.gguf
-MODEL_QUANTIZATION=Q4_K_M
-CONTEXT_TOKENS=4096
-MAX_BATCH_SIZE=512
-N_GPU_LAYERS=35
-THREADS=8
-MEMORY_BUDGET_MB=4096
-COREML_ENABLED=true
-COREML_COMPUTE_UNITS=ALL
-USE_MLOCK=true
-USE_MMAP=true
-```
-
-### Example `.env` (local Ollama — the default)
-
-```env
-# LLM + embeddings: local & free via Ollama
-LLM_PROVIDER=ollama
+# --- LLM Engine Configuration ---
+LLM_PROVIDER=ollama                     # ollama | llama_cpp | openai
 LLM_MODEL=llama3.1:8b
 LLM_ENDPOINT=http://localhost:11434/v1
 LLM_API_KEY=ollama
 
+# --- Embedding Configuration ---
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=nomic-embed-text
-# NOTE: /api/embed (batch API), NOT /api/embeddings
 EMBEDDING_ENDPOINT=http://localhost:11434/api/embed
 EMBEDDING_DIMENSIONS=768
-HUGGINGFACE_TOKENIZER=nomic-ai/nomic-embed-text-v1.5
 
-# Raw OpenAI-SDK calls (diff summaries, rule clustering) route to Ollama too
-OPENAI_API_KEY=ollama
-OPENAI_BASE_URL=http://localhost:11434/v1
-```
-
-### Optional: OpenAI or Cognee Cloud
-
-```bash
-# Use a paid OpenAI key instead of Ollama
-anamnesis config set-llm-key <your_openai_key>   # then set llm_provider=openai
-
-# Team-wide shared memory via Cognee Cloud (platform.cognee.ai)
-anamnesis config set-cloud-key <your_cognee_api_key>
+# --- Quantized llama.cpp Settings (When using llama_cpp provider) ---
+MODEL_PATH=/path/to/model.gguf
+MODEL_QUANTIZATION=Q4_K_M
+MEMORY_BUDGET_MB=4096
+CONTEXT_TOKENS=4096
+N_GPU_LAYERS=35
+COREML_ENABLED=true
 ```
 
 ---
 
-## 6. CLI Command Reference
+## Project Structure
 
-### `anamnesis init`
-Ingests commit history into Cognee memory and installs `.git/hooks/pre-commit`.
-```bash
-anamnesis init
 ```
-
-### `anamnesis remember-bug`
-Logs a bug fix, its root cause, and fix details into codebase memory. Supports explicit flags or auto-summarization from the staged `git diff`.
-```bash
-anamnesis remember-bug --file services/user_service.py \
-  --title "Unchecked API crash" --cause "Missing null check" --fix "Added guard clause"
-
-anamnesis remember-bug --auto   # summarize the staged diff
-```
-
-### `anamnesis remember`
-Ingests a general document, ADR, or PR note into the knowledge graph.
-```bash
-anamnesis remember "Use the service layer for DB queries" \
-  --content "All direct DB queries must pass through services." --file services/base.py
-```
-
-### `anamnesis ask`
-Query codebase memory in natural language (GRAPH_COMPLETION + HYBRID_COMPLETION + CODING_RULES). Shows which strategy found each result.
-```bash
-anamnesis ask "Why do we validate external API responses in the service layer?"
-```
-
-### `anamnesis timeline`
-Temporal recall — shows how bug patterns evolved over time (requires `use_temporal_cognify`; falls back to local timestamp ordering otherwise).
-```bash
-anamnesis timeline "recurring null pointer bugs" --top-k 10
-```
-
-### `anamnesis reflect`
-Clusters related bug reports across files into consolidated team rules (`memify`).
-```bash
-anamnesis reflect
-```
-
-### `anamnesis rules`
-Displays a Rich table of all active consolidated team rules and their provenance links.
-```bash
-anamnesis rules
-```
-
-### `anamnesis improve`
-Post-ingestion graph enrichment, edge-weight adaptation, and node optimization.
-```bash
-anamnesis improve
-```
-
-### `anamnesis feedback`
-Rate the last recall result to improve future ranking (Cognee truth-subspace reranking).
-```bash
-anamnesis feedback --helpful
-anamnesis feedback --not-helpful
-```
-
-### `anamnesis forget`
-Decays or removes stale memory by ID or file path.
-```bash
-anamnesis forget mem_bug_8cec331b
-anamnesis forget services/user_service.py
-```
-
-### `anamnesis visualize`
-Opens an **interactive provenance graph** in your browser (D3 force graph). Merges the Cognee provenance graph (User → Dataset → File → Session) with your local memory records, so **clicking any node opens a detail panel** with the bug's type, root cause, fix, and file. Nodes use short tags; the graph supports zoom, pan, and drag.
-```bash
-anamnesis visualize                 # open in browser
-anamnesis visualize -o graph.html   # save to a file instead
-```
-
-### `anamnesis status`
-Dashboard of memory statistics, active rule counts, and Git hook status.
-```bash
-anamnesis status
-```
-
-### `anamnesis config`
-Manage LLM provider, quantized inference, and Cognee Cloud settings.
-```bash
-anamnesis config show                              # active configuration dashboard
-anamnesis config set-backend llama_cpp             # set backend: ollama | openai | llama_cpp
-anamnesis config set-model /path/to/model.gguf     # configure local GGUF model path or name
-anamnesis config set-quantization Q4_K_M           # configure GGUF quantization level
-anamnesis config set-context 4096                  # configure context window (tokens)
-anamnesis config set-memory-budget 4096            # configure runtime memory limit (MB)
-anamnesis config set-llm-key <openai_key>          # configure a paid LLM key
-anamnesis config set-cloud-key <cognee_key>        # configure Cognee Cloud
-```
-
-### `anamnesis mcp-serve`
-Runs Anamnesis as an **MCP server** so Claude Code / Cursor can use codebase memory as native tools (`recall_codebase_memory`, `remember_bug_fix`, `get_coding_rules`, `get_memory_status`, `forget_memory`).
-```bash
-anamnesis mcp-serve                       # stdio (default)
-anamnesis mcp-serve -t http --port 8765   # HTTP transport
-```
-Claude Desktop config (`~/.claude/claude_desktop_config.json`):
-```json
-{ "mcpServers": { "anamnesis": { "command": "anamnesis", "args": ["mcp-serve"] } } }
+Anamnesis/
+├── anamnesis/
+│   ├── cli.py               # Typer CLI application, commands & D3 visualizer
+│   ├── config.py            # Configuration manager & LLM environment routing
+│   ├── llm_runtime.py       # Quantized llama.cpp runtime & memory budgeting
+│   ├── mcp_server.py        # Model Context Protocol (FastMCP) server
+│   ├── git/
+│   │   ├── hooks.py         # Git pre-commit hook installation and lifecycle
+│   │   └── inspector.py     # Commit diff parsing and Git repository inspection
+│   ├── memory/
+│   │   ├── client.py        # Cognee hybrid graph/vector client + JSON fallback
+│   │   ├── consolidator.py  # Unsupervised pattern clustering & rule generation
+│   │   └── schemas.py       # Pydantic domain models & graph ontology
+│   ├── ui/
+│   │   └── formatter.py     # Rich terminal output formatting & dashboards
+│   └── utils/
+│       └── llm_helper.py    # Zero-shot diff summarization & structured prompt helpers
+├── demo/
+│   └── run_demo.py          # End-to-end simulated lifecycle demonstration
+├── tests/
+│   ├── test_cli.py          # CLI command suite tests
+│   ├── test_llm_runtime.py  # Quantized inference & memory budget test cases
+│   └── test_memory.py       # Memory persistence & retrieval tests
+├── pyproject.toml           # Package build metadata & entry points
+└── requirements.txt         # Core dependencies
 ```
 
 ---
 
-## 7. Visualizing the Memory Graph
+## Verification & Testing
 
-`anamnesis visualize` renders an interactive graph of everything Anamnesis knows:
-
-- **Nodes** — `user`, `dataset`, `doc`, `session` (from Cognee provenance) plus your `bug_fix`, `rule`, `commit`, and `documentation` memories, color-coded by type with a legend.
-- **Click a node** → a side panel shows structured detail:
-  ```
-  Type: bug_fix
-  Root Cause: Unchecked response.json() on 204 status
-  Fix: Added HTTP status check and defensive .get() chaining
-  File: services/user_service.py
-  ```
-- **Interactions** — scroll to zoom, drag the background to pan, drag nodes to reposition.
-
-The page is a self-contained HTML file, so you can also commit or share `graph.html`.
-
----
-
-## 8. Live Interactive Demo
-
-Run the self-contained demo to watch all 5 Cognee primitives in action:
+Anamnesis includes an automated test suite covering CLI commands, memory ingestion, fallback mechanisms, and runtime memory allocation:
 
 ```bash
-python demo/run_demo.py
-```
-
-It ingests baseline history, logs a bug (`remember`), fires a pre-commit warning on a similar flaw (`recall`), consolidates rules (`memify/reflect`), decays stale memory (`forget`), and answers a natural-language query (`ask`).
-
----
-
-## 9. How It Works (Internals)
-
-- **`anamnesis/cli.py`** — Typer CLI + Rich UI, including the D3 graph renderer for `visualize`.
-- **`anamnesis/config.py`** — config loading and `configure_llm_env()`, which wires Cognee/LiteLLM and the OpenAI SDK to the chosen provider (Ollama by default).
-- **`anamnesis/memory/client.py`** — `MemoryClient`: the Cognee integration and local JSON store, with robust cognify fallback for weak local models.
-- **`anamnesis/memory/consolidator.py`** — bug-pattern clustering into team rules.
-- **`anamnesis/git/`** — commit inspection and pre-commit hook installation.
-- **`anamnesis/mcp_server.py`** — MCP server exposing memory as tools.
-
----
-
-## 10. Running Tests
-
-```bash
-pytest tests/
+# Run full unit and integration test suite
+python3 -m pytest
 ```
 
 ---
 
-## 11. License
+## Engineering Design Principles
 
-Licensed under the **MIT License**.
+1. **Deterministic Resilience**: LLM APIs fail, local runtimes crash, and network connections drop. Anamnesis guarantees that Git operations are never blocked: if graph or embedding backends encounter errors, execution transparently falls back to local JSON indexing and regex scoring.
+2. **Local-First & Privacy Conscious**: Proprietary source code should never be forced into third-party cloud APIs. Anamnesis provides production-grade local quantized execution with Metal/CoreML acceleration and explicit memory limits.
+3. **Actionable at the Point of Impact**: Storing documentation in external portals rarely prevents errors. By embedding intelligence directly into Git pre-commit hooks and AI IDE contexts via MCP, warnings appear at the exact moment code is authored.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
